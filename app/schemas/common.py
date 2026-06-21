@@ -65,6 +65,7 @@ class CalendarEventCreate(BaseModel):
     start_time: datetime
     end_time: datetime
     location: Optional[str] = None
+    link: Optional[str] = None
     course_id: Optional[UUID] = None
 
 class CalendarEventResponse(CalendarEventCreate):

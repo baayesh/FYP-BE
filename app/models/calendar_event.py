@@ -21,10 +21,11 @@ class CalendarEvent(Base):
     creator_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(255), nullable=False)
     description = Column(Text)
-    type = Column(Enum(EventType), nullable=False)
+    type = Column(Enum(EventType, values_callable=lambda x: [e.value for e in x]), nullable=False)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     location = Column(String(255))
+    link = Column(String(500))
     created_at = Column(DateTime, default=func.now())
 
     # Relationships
