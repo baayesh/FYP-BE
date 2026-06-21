@@ -61,6 +61,7 @@ class AssignmentFile(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     submission_id = Column(String(36), ForeignKey("assignment_submissions.id", ondelete="CASCADE"), nullable=False)
+    assignment_id = Column(String(100), nullable=False)
     file_name = Column(String(255), nullable=False)
     file_url = Column(Text, nullable=False)
     file_size = Column(Integer)

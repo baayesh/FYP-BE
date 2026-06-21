@@ -9,7 +9,7 @@ from app.repositories.user import UserRepository
 from app.repositories.course import CourseRepository, LessonRepository
 from app.models.user import User
 from app.models.course import Course, Lesson
-from app.models.assignment import Assignment, AssignmentSubmission, AssignmentEnrollment
+from app.models.assignment import Assignment, AssignmentSubmission, AssignmentFile, AssignmentEnrollment, AssignmentStatus
 from app.models.student_lesson import StudentLesson
 from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
@@ -259,6 +259,68 @@ class StudentService:
             })
 
         return assignments
+
+    def submit_assignment(self, student_id: str, assignment_id: str,
+                          content: Optional[str] = None,
+                          files: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """Submit an assignment — creates submission & file records, updates enrollment"""
+        assignment = self.db.query(Assignment).filter(Assignment.id == assignment_id).first()
+        if not assignment:
+            raise NotFoundError("Assignment not found")
+
+        enrollment = self.db.query(AssignmentEnrollment).filter(
+            AssignmentEnrollment.student_id == student_id,
+            AssignmentEnrollment.assignment_id == assignment_id
+        ).first()
+        if not enrollment:
+            raise NotFoundError("Student is not enrolled in this assignment")
+
+        submission = AssignmentSubmission(
+            assignment_id=assignment_id,
+            student_id=student_id,
+            content=content,
+            submitted_at=datetime.utcnow(),
+            status=AssignmentStatus.SUBMITTED
+        )
+        self.db.add(submission)
+        self.db.flush()
+
+        file_records = []
+        if files:
+            for f in files:
+                file_record = AssignmentFile(
+                    submission_id=submission.id,
+                    assignment_id=assignment_id,
+                    file_name=f.get("name", ""),
+                    file_url=f.get("url", ""),
+                    file_size=f.get("size")
+                )
+                self.db.add(file_record)
+                file_records.append(file_record)
+            self.db.flush()
+
+        enrollment.marks = 0
+        enrollment.status = "submitted"
+
+        try:
+            self.db.commit()
+            self.db.refresh(submission)
+        except Exception as e:
+            self.db.rollback()
+            raise ValidationError(f"Failed to submit assignment: {str(e)}")
+
+        return {
+            "submission_id": submission.id,
+            "assignment_id": submission.assignment_id,
+            "student_id": submission.student_id,
+            "content": submission.content,
+            "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+            "status": submission.status.value,
+            "files": [
+                {"id": f.id, "name": f.file_name, "url": f.file_url, "size": f.file_size}
+                for f in file_records
+            ]
+        }
 
     def get_assignment_details(self, student_id: UUID, assignment_id: str) -> Dict[str, Any]:
         """Get detailed assignment information"""

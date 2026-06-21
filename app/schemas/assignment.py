@@ -46,6 +46,18 @@ class AssignmentSubmissionCreate(BaseModel):
     content: Optional[str] = None
     # files handled separately in multipart form
 
+
+class AssignmentSubmitFile(BaseModel):
+    name: str
+    url: str
+    size: Optional[int] = None
+
+
+class AssignmentSubmitRequest(BaseModel):
+    content: Optional[str] = None
+    files: List[AssignmentSubmitFile] = []
+
+
 # Assignment Submission Response
 class AssignmentSubmissionResponse(BaseModel):
     submission_id: UUID

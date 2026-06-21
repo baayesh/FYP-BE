@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, status
+import os
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import text, and_
-from typing import Optional
+from typing import Optional, List
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -178,6 +180,56 @@ async def get_assignment_details(
         )
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+UPLOAD_DIR = "uploads/assignments"
+
+@router.post("/assignments/{assignment_id}/submit", response_model=APIResponse)
+async def submit_assignment(
+    assignment_id: str,
+    email: str = Query(..., description="Student's email address"),
+    content: Optional[str] = Form(None),
+    files: List[UploadFile] = File(None),
+    db: Session = Depends(get_db)
+):
+    """Submit an assignment — accepts multipart files + text content"""
+    try:
+        student = get_student_by_email(email, db)
+        student_service = StudentService(db)
+
+        file_data = []
+        if files:
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            for f in files:
+                if f.filename:
+                    ext = os.path.splitext(f.filename)[1]
+                    saved_name = f"{uuid.uuid4()}{ext}"
+                    file_path = os.path.join(UPLOAD_DIR, saved_name)
+                    with open(file_path, "wb") as buffer:
+                        buffer.write(await f.read())
+                    file_data.append({
+                        "name": f.filename,
+                        "url": file_path,
+                        "size": os.path.getsize(file_path),
+                    })
+
+        result = student_service.submit_assignment(
+            student_id=str(student.id),
+            assignment_id=assignment_id,
+            content=content,
+            files=file_data if file_data else None,
+        )
+        return APIResponse(
+            success=True,
+            data=result,
+            message="Assignment submitted successfully"
+        )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
