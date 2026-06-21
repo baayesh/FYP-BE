@@ -10,6 +10,9 @@ from app.repositories.course import CourseRepository, LessonRepository
 from app.models.user import User
 from app.models.course import Course, Lesson
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentFile, AssignmentEnrollment, AssignmentStatus
+from app.models.grade import Grade, GradeItemType
+from app.models.essay import Essay, EssaySubmission
+from app.models.quiz import Quiz
 from app.models.student_lesson import StudentLesson
 from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
@@ -46,6 +49,148 @@ class StudentService:
         }
         
         return stats
+
+    def _to_letter_grade(self, numeric_grade: float) -> str:
+        if numeric_grade >= 97: return "A+"
+        elif numeric_grade >= 90: return "A"
+        elif numeric_grade >= 87: return "B+"
+        elif numeric_grade >= 80: return "B"
+        elif numeric_grade >= 77: return "C+"
+        elif numeric_grade >= 70: return "C"
+        elif numeric_grade >= 67: return "D+"
+        elif numeric_grade >= 60: return "D"
+        else: return "F"
+
+    def get_grades(self, student_id, db=None) -> Dict[str, Any]:
+        student_id_str = str(student_id)
+
+        results = (
+            db.query(Grade, Course)
+            .join(Course, Grade.course_id == Course.id)
+            .filter(Grade.student_id == student_id_str)
+            .order_by(Grade.graded_at.desc())
+            .all()
+        )
+
+        assignment_ids = []
+        essay_ids = []
+        quiz_ids = []
+
+        for grade, course in results:
+            if grade.item_type == GradeItemType.ASSIGNMENT:
+                assignment_ids.append(grade.item_id)
+            elif grade.item_type == GradeItemType.ESSAY:
+                essay_ids.append(grade.item_id)
+            elif grade.item_type == GradeItemType.QUIZ:
+                quiz_ids.append(grade.item_id)
+
+        item_names = {}
+
+        if assignment_ids:
+            item_names.update({
+                a.id: a.title
+                for a in db.query(Assignment).filter(Assignment.id.in_(assignment_ids)).all()
+            })
+
+        if essay_ids:
+            item_names.update({
+                e.id: e.title
+                for e in db.query(Essay).filter(Essay.id.in_(essay_ids)).all()
+            })
+
+        if quiz_ids:
+            item_names.update({
+                q.id: q.title
+                for q in db.query(Quiz).filter(Quiz.id.in_(quiz_ids)).all()
+            })
+
+        feedback_map = {}
+
+        if assignment_ids:
+            for sub in db.query(AssignmentSubmission).filter(
+                AssignmentSubmission.assignment_id.in_(assignment_ids),
+                AssignmentSubmission.student_id == student_id_str,
+                AssignmentSubmission.feedback != None
+            ).all():
+                feedback_map[sub.assignment_id] = sub.feedback
+
+        if essay_ids:
+            for sub in db.query(EssaySubmission).filter(
+                EssaySubmission.essay_id.in_(essay_ids),
+                EssaySubmission.student_id == student_id_str,
+                EssaySubmission.feedback != None
+            ).all():
+                feedback_map[sub.essay_id] = sub.feedback
+
+        grades_data = []
+        subject_totals = {}
+
+        for grade, course in results:
+            item_name = item_names.get(grade.item_id)
+            if not item_name:
+                item_name = f"{grade.item_type.value.title()}"
+
+            percentage = float(grade.grade) if grade.grade else 0
+            score = float(grade.points_earned) if grade.points_earned else None
+            max_score = float(grade.points_possible) if grade.points_possible else None
+            date_str = grade.graded_at.strftime("%Y-%m-%d") if grade.graded_at else None
+
+            grades_data.append({
+                "id": grade.id,
+                "subject": course.title,
+                "item_type": grade.item_type.value,
+                "item_name": item_name,
+                "score": score,
+                "max_score": max_score,
+                "percentage": percentage,
+                "letter_grade": grade.letter_grade,
+                "date": date_str,
+                "feedback": feedback_map.get(grade.item_id)
+            })
+
+            if grade.course_id not in subject_totals:
+                subject_totals[grade.course_id] = {
+                    "subject": course.title,
+                    "percentages": [],
+                    "dates": []
+                }
+            subject_totals[grade.course_id]["percentages"].append(percentage)
+            if grade.graded_at:
+                subject_totals[grade.course_id]["dates"].append(grade.graded_at)
+
+        subject_summaries = []
+        for course_id, info in subject_totals.items():
+            avg = sum(info["percentages"]) / len(info["percentages"])
+            letter = self._to_letter_grade(avg)
+
+            trend = "stable"
+            if len(info["dates"]) >= 2:
+                sorted_grades = sorted(
+                    zip(info["percentages"], info["dates"]),
+                    key=lambda x: x[1]
+                )
+                recent_avg = sorted_grades[-1][0]
+                older_avg = sum(g[0] for g in sorted_grades[:-1]) / (len(sorted_grades) - 1)
+                if recent_avg > older_avg + 2:
+                    trend = "up"
+                elif recent_avg < older_avg - 2:
+                    trend = "down"
+
+            subject_summaries.append({
+                "subject": info["subject"],
+                "average": round(avg, 1),
+                "grade": letter,
+                "trend": trend
+            })
+
+        all_percentages = [g["percentage"] for g in grades_data if g["percentage"] is not None]
+        overall_average = round(sum(all_percentages) / len(all_percentages), 1) if all_percentages else 0
+
+        return {
+            "grades": grades_data,
+            "subject_summaries": subject_summaries,
+            "overall_average": overall_average
+        }
 
     def get_performance_data(self, student_id: UUID, period: str) -> Dict[str, Any]:
         """Get student performance data"""

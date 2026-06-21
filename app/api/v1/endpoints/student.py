@@ -136,6 +136,26 @@ async def enroll_in_course(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Grades endpoint
+@router.get("/grades", response_model=APIResponse)
+async def get_student_grades(
+    email: str = Query(..., description="Student's email address"),
+    db: Session = Depends(get_db)
+):
+    """Get student's grades with per-subject summaries and overall average"""
+    try:
+        student = get_student_by_email(email, db)
+        student_service = StudentService(db)
+        grades_data = student_service.get_grades(student.id, db)
+
+        return APIResponse(
+            success=True,
+            data=grades_data,
+            message="Grades retrieved successfully"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Assignment endpoints
 @router.get("/assignments", response_model=APIResponse)
 async def get_assignments(
