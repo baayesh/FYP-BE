@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, student, teacher, parent, admin, shared, student_performance, courses, lessons, calendar_event
+from app.api.v1.endpoints import auth, student, teacher, parent, admin, shared, student_performance, courses, lessons, calendar_event, forum
 
 api_router = APIRouter()
 
@@ -15,3 +15,4 @@ api_router.include_router(parent.router, prefix="/parent", tags=["parent"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(shared.router, tags=["shared"])
 api_router.include_router(calendar_event.router, prefix="/student", tags=["calendar"])
+api_router.include_router(forum.router, tags=["forum"])

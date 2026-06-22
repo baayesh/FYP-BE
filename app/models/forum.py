@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, Boolean, Integer, Enum
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime, Boolean, Integer
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -19,10 +19,12 @@ class ForumThread(Base):
     author_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(255), nullable=False)
     content = Column(Text, nullable=False)
-    category = Column(Enum(ThreadCategory), default=ThreadCategory.GENERAL)
+    category = Column(String(20), default=ThreadCategory.GENERAL.value)
     is_pinned = Column(Boolean, default=False)
     is_resolved = Column(Boolean, default=False)
     views = Column(Integer, default=0)
+    likes = Column(Integer, default=0)
+    tags = Column(Text)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
