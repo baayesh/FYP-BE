@@ -9,6 +9,7 @@ from app.schemas.common import APIResponse
 from app.models.user import User, UserRole
 from app.models.course import Course, CourseStatus, CourseEnrollment, EnrollmentStatus
 from app.services.teacher_stats import TeacherStatsService
+from app.services.teacher import TeacherAssignmentService
 
 from pydantic import BaseModel, Field
 from app.models.course import Lesson, LessonType
@@ -298,8 +299,36 @@ async def create_lesson(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+# Assignment management endpoints
+@router.get("/assignments", response_model=APIResponse)
+async def get_teacher_assignments(
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Get all assignments for courses taught by a teacher"""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = TeacherAssignmentService(db)
+        assignments = service.get_teacher_assignments(teacher_id)
+
+        return APIResponse(
+            success=True,
+            data={"assignments": assignments},
+            message=f"Found {len(assignments)} assignment(s)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Add more endpoints as needed...
-# - Assignment management
 # - Grading
 # - Student progress tracking
 # - etc.
