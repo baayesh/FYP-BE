@@ -12,6 +12,7 @@ from app.services.teacher_stats import TeacherStatsService
 from app.services.teacher import TeacherAssignmentService
 
 from pydantic import BaseModel, Field
+from datetime import datetime
 from app.models.course import Lesson, LessonType
 
 router = APIRouter()
@@ -322,6 +323,35 @@ async def get_teacher_assignments(
             success=True,
             data={"assignments": assignments},
             message=f"Found {len(assignments)} assignment(s)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class CreateAssignmentRequest(BaseModel):
+    course_id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    due_date: datetime
+    points: int = Field(..., ge=0)
+
+@router.post("/assignments", response_model=APIResponse)
+async def create_assignment(
+    assignment_data: CreateAssignmentRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Create a new assignment for a course taught by the teacher"""
+    try:
+        service = TeacherAssignmentService(db)
+        assignment = service.create_assignment(teacher_id, assignment_data.dict())
+
+        return APIResponse(
+            success=True,
+            data={"assignment": assignment},
+            message="Assignment created successfully"
         )
     except HTTPException:
         raise

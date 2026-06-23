@@ -1,16 +1,78 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from fastapi import HTTPException
 
+from app.models.user import User, UserRole
 from app.models.course import Course, CourseEnrollment, EnrollmentStatus
-from app.models.assignment import Assignment, AssignmentSubmission
+from app.models.assignment import Assignment, AssignmentSubmission, AssignmentEnrollment
 
 
 class TeacherAssignmentService:
     def __init__(self, db: Session):
         self.db = db
+
+    def create_assignment(
+        self, teacher_id: str, data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        teacher = self.db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        course = self.db.query(Course).filter(
+            Course.id == data["course_id"],
+            Course.teacher_id == teacher_id
+        ).first()
+        if not course:
+            raise HTTPException(
+                status_code=404,
+                detail="Course not found or not taught by this teacher"
+            )
+
+        assignment = Assignment(
+            course_id=data["course_id"],
+            title=data["title"],
+            description=data.get("description"),
+            instructions=data.get("instructions"),
+            due_date=data["due_date"],
+            points=data["points"],
+        )
+        self.db.add(assignment)
+        self.db.flush()
+
+        enrolled_students = self.db.query(CourseEnrollment).filter(
+            CourseEnrollment.course_id == data["course_id"],
+            CourseEnrollment.status == EnrollmentStatus.ACTIVE
+        ).all()
+
+        for enrollment in enrolled_students:
+            ae = AssignmentEnrollment(
+                course_id=data["course_id"],
+                student_id=enrollment.student_id,
+                assignment_id=assignment.id,
+                status="pending",
+            )
+            self.db.add(ae)
+
+        self.db.commit()
+        self.db.refresh(assignment)
+
+        return {
+            "id": assignment.id,
+            "course_id": assignment.course_id,
+            "title": assignment.title,
+            "description": assignment.description,
+            "instructions": assignment.instructions,
+            "dueDate": assignment.due_date.strftime("%Y-%m-%d"),
+            "points": assignment.points,
+            "created_at": assignment.created_at.isoformat() if assignment.created_at else None,
+        }
 
     def get_teacher_assignments(self, teacher_id: str) -> List[Dict[str, Any]]:
         courses = self.db.query(Course).filter(Course.teacher_id == teacher_id).all()
