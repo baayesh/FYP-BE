@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Redis Settings (for caching and sessions)
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Performance Settings
+    PERFORMANCE_TREND_LOOKBACK_DAYS: int = 30
+
     # AI Settings
     OPENAI_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""

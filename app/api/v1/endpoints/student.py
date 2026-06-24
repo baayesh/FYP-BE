@@ -1,5 +1,7 @@
 import os
 import uuid
+from datetime import datetime
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import text, and_
@@ -13,10 +15,13 @@ from app.schemas.common import APIResponse, StudentDashboardStats, PerformanceDa
 from app.schemas.course import CourseListResponse
 from app.schemas.assignment import AssignmentResponse
 from app.schemas.lesson import LessonCompletionRequest, StudentLessonAnswerRequest, StudentLessonAnswerResponse
+from app.schemas.quiz import QuizSubmitRequest, QuizSubmitResponse
 from app.models.user import User, UserRole
 from app.models.course import Lesson
+from app.models.quiz import Quiz, QuizQuestion, QuizAttempt
 from app.models.student_lesson import StudentLesson
 from app.services.student import StudentService
+from app.services.performance_service import PerformanceService
 
 router = APIRouter()
 
@@ -241,6 +246,12 @@ async def submit_assignment(
             content=content,
             files=file_data if file_data else None,
         )
+
+        try:
+            PerformanceService(db).log_activity(str(student.id), assignments_completed=1)
+        except Exception:
+            pass
+
         return APIResponse(
             success=True,
             data=result,
@@ -265,7 +276,19 @@ async def mark_lesson_completed(
         
         student_service = StudentService(db)
         quiz_questions = student_service.generate_lesson_quiz(lesson_id, student_id)
-        
+
+        lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
+        hours = Decimal(str(round((lesson.duration or 0) / 60, 2))) if lesson else Decimal("0")
+
+        try:
+            PerformanceService(db).log_activity(
+                student_id,
+                lessons_viewed=1,
+                hours_studied=hours
+            )
+        except Exception:
+            pass
+
         return APIResponse(
             success=True,
             data={"message": quiz_questions},
@@ -343,4 +366,82 @@ async def get_spaced_repetition_quiz(
             data=result
         )
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Quiz Endpoints ──
+
+@router.post("/quiz/{quiz_id}/submit", response_model=APIResponse)
+async def submit_quiz(
+    quiz_id: str,
+    body: QuizSubmitRequest,
+    db: Session = Depends(get_db)
+):
+    """Submit answers for a quiz and get scored result."""
+    try:
+        quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+        if not quiz:
+            raise HTTPException(status_code=404, detail="Quiz not found")
+
+        questions = db.query(QuizQuestion).filter(
+            QuizQuestion.quiz_id == quiz_id
+        ).order_by(QuizQuestion.order_index).all()
+
+        if not questions:
+            raise HTTPException(status_code=400, detail="Quiz has no questions")
+
+        answer_map = {a.question_id: a.answer for a in body.answers}
+
+        correct_count = 0
+        total_points = 0
+        earned_points = 0
+
+        for q in questions:
+            student_ans = answer_map.get(q.id, "").strip().lower()
+            correct_ans = q.correct_answer.strip().lower()
+            total_points += q.points
+            if student_ans == correct_ans:
+                correct_count += 1
+                earned_points += q.points
+
+        score = round((earned_points / total_points) * 100, 2) if total_points > 0 else 0
+        passed = score >= quiz.passing_score
+
+        attempt = QuizAttempt(
+            quiz_id=quiz_id,
+            student_id=body.student_id,
+            submitted_at=datetime.utcnow(),
+            score=score,
+            passed=passed,
+            answers=[a.dict() for a in body.answers]
+        )
+        db.add(attempt)
+        db.commit()
+        db.refresh(attempt)
+
+        try:
+            PerformanceService(db).update_trend(body.student_id)
+            PerformanceService(db).log_activity(body.student_id, quizzes_completed=1)
+        except Exception:
+            pass
+
+        return APIResponse(
+            success=True,
+            message="Quiz submitted successfully",
+            data=QuizSubmitResponse(
+                attempt_id=attempt.id,
+                quiz_id=quiz_id,
+                student_id=body.student_id,
+                score=score,
+                total=float(total_points),
+                passed=passed,
+                correct_count=correct_count,
+                total_questions=len(questions),
+            ).dict()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

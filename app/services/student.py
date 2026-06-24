@@ -16,6 +16,7 @@ from app.models.quiz import Quiz
 from app.models.student_lesson import StudentLesson
 from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
+from app.services.performance_service import PerformanceService
 
 class StudentService:
     def __init__(self, db: Session):
@@ -537,7 +538,13 @@ class StudentService:
         except Exception as e:
             self.db.rollback()
             raise ValidationError(f"Failed to save lesson answers: {str(e)}")
-        
+
+        try:
+            PerformanceService(self.db).update_trend(student_id)
+            PerformanceService(self.db).log_activity(student_id, quizzes_completed=1)
+        except Exception:
+            pass
+
         return {
             "id": str(student_lesson.id),
             "lesson_id": str(student_lesson.lesson_id),

@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.services.performance_service import PerformanceService
 from app.models.user import User, UserRole
 from app.models.student_performance import (
     PerformanceTrend,
@@ -583,7 +584,12 @@ async def create_subject_mark(
         db.add(mark)
         db.commit()
         db.refresh(mark)
-        
+
+        try:
+            PerformanceService(db).update_trend(mark_data.student_id)
+        except Exception:
+            pass
+
         return APIResponse(
             success=True,
             message="Subject mark created successfully",

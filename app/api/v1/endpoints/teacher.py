@@ -8,8 +8,11 @@ from app.core.dependencies import get_teacher_user
 from app.schemas.common import APIResponse
 from app.models.user import User, UserRole
 from app.models.course import Course, CourseStatus, CourseEnrollment, EnrollmentStatus
+from app.models.assignment import Assignment, AssignmentSubmission, AssignmentStatus
+from app.models.grade import Grade, GradeItemType
 from app.services.teacher_stats import TeacherStatsService
 from app.services.teacher import TeacherAssignmentService
+from app.services.performance_service import PerformanceService
 
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -358,7 +361,87 @@ async def create_assignment(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Add more endpoints as needed...
-# - Grading
-# - Student progress tracking
-# - etc.
+# ── Grading Schema ──
+
+class GradeSubmissionRequest(BaseModel):
+    student_id: str = Field(..., description="ID of the student")
+    grade: float = Field(..., ge=0, description="Numeric grade (percentage)")
+    feedback: Optional[str] = Field(None, description="Teacher feedback")
+    max_score: float = Field(100.0, ge=1, description="Maximum possible score")
+
+
+# ── Grading Endpoint ──
+
+@router.post("/assignments/{assignment_id}/grade", response_model=APIResponse)
+async def grade_assignment(
+    assignment_id: str,
+    body: GradeSubmissionRequest,
+    current_user: User = Depends(get_teacher_user),
+    db: Session = Depends(get_db)
+):
+    """Grade a student's assignment submission (Teacher only)."""
+    try:
+        assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
+        if not assignment:
+            raise HTTPException(status_code=404, detail="Assignment not found")
+
+        course = db.query(Course).filter(
+            Course.id == assignment.course_id,
+            Course.teacher_id == current_user.id
+        ).first()
+        if not course:
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to grade this assignment"
+            )
+
+        submission = db.query(AssignmentSubmission).filter(
+            AssignmentSubmission.assignment_id == assignment_id,
+            AssignmentSubmission.student_id == body.student_id
+        ).first()
+        if not submission:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        percentage = min(body.grade, 100.0)
+        points_earned = round((percentage / 100.0) * body.max_score, 2)
+
+        submission.grade = percentage
+        submission.feedback = body.feedback
+        submission.status = AssignmentStatus.GRADED
+
+        grade_record = Grade(
+            student_id=body.student_id,
+            course_id=assignment.course_id,
+            item_type=GradeItemType.ASSIGNMENT,
+            item_id=assignment_id,
+            grade=percentage,
+            points_earned=points_earned,
+            points_possible=body.max_score,
+            graded_by=current_user.id,
+            graded_at=datetime.utcnow(),
+        )
+        db.add(grade_record)
+        db.commit()
+
+        try:
+            PerformanceService(db).update_trend(body.student_id)
+        except Exception:
+            pass
+
+        return APIResponse(
+            success=True,
+            message="Assignment graded successfully",
+            data={
+                "submission_id": submission.id,
+                "grade": percentage,
+                "points_earned": points_earned,
+                "points_possible": body.max_score,
+                "feedback": body.feedback,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

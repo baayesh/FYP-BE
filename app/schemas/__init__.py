@@ -20,3 +20,7 @@ from .student_performance import (
     ImprovementAreaResponse,
     DashboardSummary
 )
+from .quiz import (
+    QuizSubmitRequest,
+    QuizSubmitResponse,
+)

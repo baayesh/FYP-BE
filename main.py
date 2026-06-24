@@ -65,7 +65,6 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-# Initialize database tables and seed sample data
 init_db()
 # seed_db()
 
