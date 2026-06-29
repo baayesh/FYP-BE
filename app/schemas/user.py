@@ -61,6 +61,16 @@ class UserProfileUpdate(BaseModel):
     bio: Optional[str] = None
     date_of_birth: Optional[datetime] = None
 
+# Admin User Update Schema
+class AdminUserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    last_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    role: Optional[UserRole] = None
+    status: Optional[UserStatus] = None
+    phone: Optional[str] = Field(None, max_length=20)
+    password: Optional[str] = Field(None, min_length=8)
+
 # Authentication Response Schema
 class AuthResponse(BaseModel):
     success: bool = True

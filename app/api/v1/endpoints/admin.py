@@ -2,21 +2,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
+from typing import Optional
 
 from app.core.database import get_db
+from app.core.security import get_password_hash
 from app.schemas.common import APIResponse
+from app.schemas.user import UserRegistration, AdminUserUpdate
 from app.models.user import User, UserRole, UserStatus
 from app.models.course import Course, CourseEnrollment, CourseStatus
 from app.models.grade import Grade
 from app.models.system_health import SystemHealth
 from app.models.activity_log import ActivityLog
 from app.models.system_alert import SystemAlert
+from app.repositories.user import UserRepository
+from app.services.auth import AuthService
 
 router = APIRouter()
 
 # Dashboard endpoints
 @router.get("/dashboard/stats", response_model=APIResponse)
-async def get_admin_stats(db: Session = Depends(get_db)):
+async def get_admin_stats(
+    db: Session = Depends(get_db)
+):
     """Get admin dashboard statistics from database"""
     try:
         # Fetch system health data (latest record)
@@ -132,22 +139,108 @@ async def get_admin_stats(db: Session = Depends(get_db)):
 
 # User management endpoints
 @router.get("/users", response_model=APIResponse)
-async def get_all_users(db: Session = Depends(get_db)):
-    """Get all users in the system"""
+async def get_all_users(
+    db: Session = Depends(get_db),
+    search: Optional[str] = None,
+    role: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+):
+    """Get all users with search, filters, and pagination"""
     try:
-        users = db.query(User).all()
+        repo = UserRepository(db)
+        role_filter = UserRole(role) if role else None
+        status_filter = UserStatus(status) if status else None
+        users = repo.get_all(
+            skip=(page-1)*limit, limit=limit,
+            role=role_filter, status=status_filter, search=search
+        )
+        total = repo.count(role=role_filter, status=status_filter, search=search)
+        
         users_data = [
             {
-                "id": user.id,
-                "email": user.email,
-                "firstName": user.first_name,
-                "lastName": user.last_name,
-                "role": str(user.role.value),
-                "status": str(user.status.value)
+                "id": u.id,
+                "email": u.email,
+                "firstName": u.first_name,
+                "lastName": u.last_name,
+                "role": u.role.value,
+                "status": u.status.value,
+                "phone": u.phone,
+                "avatar": u.avatar,
+                "lastLogin": u.last_login.isoformat() if u.last_login else None,
+                "emailVerified": u.email_verified,
+                "createdAt": u.created_at.isoformat() if u.created_at else None,
             }
-            for user in users
+            for u in users
         ]
-        return APIResponse(success=True, data=users_data, message="Users retrieved successfully")
+        return APIResponse(success=True, data={
+            "users": users_data,
+            "pagination": {
+                "page": page, "limit": limit,
+                "total": total,
+                "totalPages": (total + limit - 1) // limit if total > 0 else 0
+            }
+        }, message="Users retrieved successfully")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/users", response_model=APIResponse)
+async def create_user(
+    user_data: UserRegistration,
+    db: Session = Depends(get_db)
+):
+    """Create a new user (admin)"""
+    try:
+        auth_service = AuthService(db)
+        result = auth_service.register_user(user_data)
+        return APIResponse(success=True, data=result, message="User created successfully")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.put("/users/{user_id}", response_model=APIResponse)
+async def update_user(
+    user_id: str,
+    update_data: AdminUserUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update user details, role, or status"""
+    try:
+        repo = UserRepository(db)
+        user = repo.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        update_dict = update_data.dict(exclude_none=True)
+        if "password" in update_dict:
+            update_dict["password_hash"] = get_password_hash(update_dict.pop("password"))
+        
+        updated_user = repo.update(user_id, update_dict)
+        return APIResponse(success=True, data={
+            "id": updated_user.id,
+            "email": updated_user.email,
+            "firstName": updated_user.first_name,
+            "lastName": updated_user.last_name,
+            "role": updated_user.role.value,
+            "status": updated_user.status.value,
+        }, message="User updated successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/users/{user_id}", response_model=APIResponse)
+async def delete_user(
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a user"""
+    try:
+        repo = UserRepository(db)
+        deleted = repo.delete(user_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="User not found")
+        return APIResponse(success=True, message="User deleted successfully")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -174,7 +267,9 @@ async def update_user_status(
 
 # System management endpoints
 @router.get("/system/info", response_model=APIResponse)
-async def get_system_info(db: Session = Depends(get_db)):
+async def get_system_info(
+    db: Session = Depends(get_db)
+):
     """Get system information and health status"""
     try:
         total_users = db.query(func.count(User.id)).scalar() or 0
@@ -200,7 +295,9 @@ async def get_system_info(db: Session = Depends(get_db)):
 
 # Courses endpoints
 @router.get("/courses", response_model=APIResponse)
-async def get_courses(db: Session = Depends(get_db)):
+async def get_courses(
+    db: Session = Depends(get_db)
+):
     """Get all courses with details"""
     try:
         courses_query = db.query(
