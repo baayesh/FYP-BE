@@ -1,12 +1,12 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from uuid import UUID
 
 # Common Response Schema
 class APIResponse(BaseModel):
     success: bool = True
-    data: Optional[dict] = None
+    data: Optional[Any] = None
     message: Optional[str] = None
 
 class ErrorResponse(BaseModel):

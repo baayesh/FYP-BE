@@ -144,7 +144,7 @@ class ParentStatsService:
             
             if child_grades:
                 avg_child_grade = sum(float(g.grade) for g in child_grades) / len(child_grades)
-                child_letter_grade = ParentStatsService.convert_letter_grade(avg_child_grade)
+                child_letter_grade = ParentStatsService.get_letter_grade_with_modifier(avg_child_grade)
             else:
                 child_letter_grade = "N/A"
             
@@ -189,13 +189,27 @@ class ParentStatsService:
                     if assignment:
                         recent_activity = f"Submitted {assignment.title}"
             
+            # Compute trend (compare most recent grade vs older average)
+            trend = "stable"
+            if child_grades:
+                sorted_grades = sorted(child_grades, key=lambda g: g.graded_at, reverse=True)
+                if len(sorted_grades) >= 2:
+                    recent = float(sorted_grades[0].grade)
+                    older = sum(float(g.grade) for g in sorted_grades[1:]) / len(sorted_grades[1:])
+                    if recent > older + 2:
+                        trend = "up"
+                    elif recent < older - 2:
+                        trend = "down"
+            
             children_data.append({
                 "id": child_id,
                 "name": child_user.full_name,
                 "grade": child_letter_grade,
                 "attendance": child_attendance,
                 "subjects": subjects,
-                "recent_activity": recent_activity
+                "recent_activity": recent_activity,
+                "avgScore": int(avg_child_grade) if child_grades else None,
+                "trend": trend
             })
         
         # Get recent notifications
@@ -206,7 +220,7 @@ class ParentStatsService:
         notification_type_mapping = {
             "assignment": "assignment",
             "message": "general",
-            "grade": "achievement",
+            "grade": "grade",
             "announcement": "general",
             "reminder": "meeting"
         }
