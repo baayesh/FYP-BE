@@ -37,6 +37,16 @@ class CourseUpdate(BaseModel):
     duration: Optional[str] = Field(None, max_length=50)
     thumbnail: Optional[str] = None
     status: Optional[CourseStatus] = None
+    code: Optional[str] = Field(None, max_length=50)
+    instructor: Optional[str] = Field(None, max_length=255)
+    teacher_id: Optional[str] = None
+
+# Admin Course Creation Schema (extends CourseBase with admin-only fields)
+class AdminCourseCreate(CourseBase):
+    code: Optional[str] = Field(None, max_length=50)
+    instructor: Optional[str] = Field(None, max_length=255)
+    status: CourseStatus = CourseStatus.DRAFT
+    teacher_id: str = Field(..., description="ID of the teacher assigned to this course")
 
 # Lesson Schema
 class LessonResponse(BaseModel):

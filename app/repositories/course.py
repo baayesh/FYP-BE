@@ -124,6 +124,16 @@ class CourseRepository:
             joinedload(CourseEnrollment.student)
         ).filter(CourseEnrollment.course_id == course_id).all()
 
+    def unenroll_student(self, course_id: UUID, student_id: UUID) -> Optional[CourseEnrollment]:
+        """Soft-delete: set enrollment status to DROPPED"""
+        enrollment = self.get_enrollment(course_id, student_id)
+        if not enrollment:
+            return None
+        enrollment.status = EnrollmentStatus.DROPPED
+        self.db.commit()
+        self.db.refresh(enrollment)
+        return enrollment
+
     def count_enrolled_students(self, course_id: UUID) -> int:
         """Count enrolled students in course"""
         return self.db.query(func.count(CourseEnrollment.id)).filter(

@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.security import get_password_hash
 from app.schemas.common import APIResponse
 from app.schemas.user import UserRegistration, AdminUserUpdate
+from app.schemas.course import AdminCourseCreate, CourseUpdate
 from app.models.user import User, UserRole, UserStatus
 from app.models.course import Course, CourseEnrollment, CourseStatus
 from app.models.grade import Grade
@@ -15,6 +16,7 @@ from app.models.system_health import SystemHealth
 from app.models.activity_log import ActivityLog
 from app.models.system_alert import SystemAlert
 from app.repositories.user import UserRepository
+from app.repositories.course import CourseRepository
 from app.services.auth import AuthService
 
 router = APIRouter()
@@ -334,5 +336,188 @@ async def get_courses(
         ]
         
         return APIResponse(success=True, data={"courses": courses}, message="Courses retrieved successfully")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/courses", response_model=APIResponse)
+async def create_course(
+    course_data: AdminCourseCreate,
+    db: Session = Depends(get_db)
+):
+    """Create a new course (admin)"""
+    try:
+        repo = CourseRepository(db)
+        course = repo.create(course_data.dict())
+        return APIResponse(success=True, data={
+            "id": str(course.id),
+            "title": course.title,
+            "code": course.code,
+            "instructor": course.instructor,
+            "teacher_id": str(course.teacher_id),
+            "status": course.status.value,
+        }, message="Course created successfully")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.put("/courses/{course_id}", response_model=APIResponse)
+async def update_course(
+    course_id: str,
+    course_data: CourseUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update a course (admin)"""
+    try:
+        repo = CourseRepository(db)
+        course = repo.update(course_id, course_data.dict(exclude_none=True))
+        if not course:
+            raise HTTPException(status_code=404, detail="Course not found")
+        return APIResponse(success=True, data={
+            "id": str(course.id),
+            "title": course.title,
+            "code": course.code,
+            "instructor": course.instructor,
+            "teacher_id": str(course.teacher_id),
+            "status": course.status.value,
+        }, message="Course updated successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/courses/{course_id}", response_model=APIResponse)
+async def delete_course(
+    course_id: str,
+    db: Session = Depends(get_db)
+):
+    """Delete a course (admin)"""
+    try:
+        repo = CourseRepository(db)
+        deleted = repo.delete(course_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Course not found")
+        return APIResponse(success=True, message="Course deleted successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/teachers", response_model=APIResponse)
+async def get_teachers(
+    db: Session = Depends(get_db)
+):
+    """Get all teachers for course assignment"""
+    try:
+        repo = UserRepository(db)
+        teachers = repo.get_teachers(limit=500)
+        teachers_data = [
+            {
+                "id": t.id,
+                "firstName": t.first_name,
+                "lastName": t.last_name,
+                "email": t.email,
+            }
+            for t in teachers
+        ]
+        return APIResponse(success=True, data={"teachers": teachers_data}, message="Teachers retrieved successfully")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/students", response_model=APIResponse)
+async def get_students(
+    db: Session = Depends(get_db)
+):
+    """Get all students for enrollment"""
+    try:
+        repo = UserRepository(db)
+        students = repo.get_students(limit=500)
+        students_data = [
+            {
+                "id": s.id,
+                "firstName": s.first_name,
+                "lastName": s.last_name,
+                "email": s.email,
+            }
+            for s in students
+        ]
+        return APIResponse(success=True, data={"students": students_data}, message="Students retrieved successfully")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/courses/{course_id}/enrollments", response_model=APIResponse)
+async def get_course_enrollments(
+    course_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get all enrollments for a course"""
+    try:
+        repo = CourseRepository(db)
+        enrollments = repo.get_course_enrollments(course_id)
+        enrollments_data = [
+            {
+                "studentId": str(e.student_id),
+                "firstName": e.student.first_name if e.student else "",
+                "lastName": e.student.last_name if e.student else "",
+                "email": e.student.email if e.student else "",
+                "enrolledAt": e.enrollment_date.isoformat() if e.enrollment_date else None,
+                "status": e.status.value,
+                "progress": float(e.progress or 0),
+            }
+            for e in enrollments if e.status.value != "dropped"
+        ]
+        return APIResponse(
+            success=True,
+            data={"enrollments": enrollments_data},
+            message="Enrollments retrieved successfully"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/courses/{course_id}/enroll", response_model=APIResponse)
+async def enroll_student(
+    course_id: str,
+    body: dict,
+    db: Session = Depends(get_db)
+):
+    """Enroll a student in a course"""
+    try:
+        student_id = body.get("student_id")
+        if not student_id:
+            raise HTTPException(status_code=400, detail="student_id is required")
+
+        repo = CourseRepository(db)
+        existing = repo.get_enrollment(course_id, student_id)
+        if existing:
+            if existing.status.value == "dropped":
+                existing.status = "active"
+                db.commit()
+                db.refresh(existing)
+                return APIResponse(success=True, message="Student re-enrolled successfully")
+            raise HTTPException(status_code=409, detail="Student is already enrolled in this course")
+
+        enrollment = repo.enroll_student(course_id, student_id)
+        return APIResponse(success=True, data={
+            "enrollmentId": str(enrollment.id),
+            "studentId": str(enrollment.student_id),
+        }, message="Student enrolled successfully")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/courses/{course_id}/enroll/{student_id}", response_model=APIResponse)
+async def unenroll_student(
+    course_id: str,
+    student_id: str,
+    db: Session = Depends(get_db)
+):
+    """Unenroll a student from a course (soft-delete)"""
+    try:
+        repo = CourseRepository(db)
+        enrollment = repo.unenroll_student(course_id, student_id)
+        if not enrollment:
+            raise HTTPException(status_code=404, detail="Enrollment not found")
+        return APIResponse(success=True, message="Student unenrolled successfully")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
