@@ -7,6 +7,8 @@ from .attendance import Attendance, AttendanceStatus
 from .grade import Grade, GradeItemType
 from .forum import ForumThread, ForumReply, ThreadCategory
 from .message import Message
+from .conversation import Conversation, ConversationType
+from .conversation_participant import ConversationParticipant
 from .notification import Notification, NotificationType
 from .resource import Resource, ResourceType
 from .calendar_event import CalendarEvent, ParentChildRelationship, EventType

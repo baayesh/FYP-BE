@@ -147,12 +147,7 @@ class AuthService:
 
     def get_user_by_id(self, user_id: str) -> Optional[User]:
         """Get user by ID"""
-        try:
-            # Validate that it's a valid UUID string
-            uuid.UUID(user_id)
-            return self.db.query(User).filter(User.id == user_id).first()
-        except ValueError:
-            return None
+        return self.db.query(User).filter(User.id == user_id).first()
 
     def get_user_by_email(self, email: str) -> Optional[User]:
         """Get user by email"""
