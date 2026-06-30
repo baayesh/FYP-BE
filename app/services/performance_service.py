@@ -1,19 +1,24 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_, desc
 from typing import Optional, List
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import logging
 
 from app.models.quiz import QuizAttempt
 from app.models.grade import Grade, GradeItemType
 from app.models.student_lesson import StudentLesson
-from app.models.student_performance import PerformanceTrend, SubjectMark, WeeklyActivity
+from app.models.student_performance import PerformanceTrend, SubjectMark, WeeklyActivity, StudentSkill, StudentLevel, ImprovementArea
 from app.models.user import User, UserRole
 from app.models.course import Course
 from app.core.config import settings
+from app.core.exceptions import NotFoundError, ValidationError, ConflictError
+
+logger = logging.getLogger(__name__)
 
 
 class PerformanceService:
+    # use created database connection
     def __init__(self, db: Session):
         self.db = db
 
@@ -294,3 +299,292 @@ class PerformanceService:
 
         avg = sum(all_scores) / len(all_scores)
         return Decimal(str(round(avg, 2)))
+
+    def get_student_by_email(self, email: str) -> User:
+        user = self.db.query(User).filter(
+            and_(User.email == email, User.role == UserRole.STUDENT)
+        ).first()
+        if not user:
+            raise NotFoundError("Student not found with the provided email")
+        if user.status.value != "active":
+            raise ValidationError("Student account is not active")
+        return user
+
+    def get_complete_dashboard_data(self, student_id: str, days: int = 30) -> dict:
+        cutoff_date = date.today() - timedelta(days=days)
+        week_ago = date.today() - timedelta(days=7)
+
+        return {
+            "performance_trend": self.db.query(PerformanceTrend).filter(
+                PerformanceTrend.student_id == student_id,
+                PerformanceTrend.date >= cutoff_date
+            ).order_by(PerformanceTrend.date).all(),
+
+            "weekly_activity": self.db.query(WeeklyActivity).filter(
+                WeeklyActivity.student_id == student_id,
+                WeeklyActivity.date >= week_ago
+            ).order_by(WeeklyActivity.date).all(),
+
+            "skills": self.db.query(StudentSkill).filter(
+                StudentSkill.student_id == student_id
+            ).all(),
+
+            "student_level": self.db.query(StudentLevel).filter(
+                StudentLevel.student_id == student_id
+            ).first(),
+
+            "subject_marks": self._get_latest_subject_marks(student_id),
+
+            "improvement_areas": self.db.query(ImprovementArea).filter(
+                ImprovementArea.student_id == student_id,
+                ImprovementArea.status == "active"
+            ).order_by(
+                ImprovementArea.priority.desc(),
+                ImprovementArea.identified_date
+            ).all()
+        }
+
+    def _get_latest_subject_marks(self, student_id: str) -> list:
+        latest_subquery = self.db.query(
+            SubjectMark.subject_name,
+            func.max(SubjectMark.assessment_date).label('max_date')
+        ).filter(
+            SubjectMark.student_id == student_id
+        ).group_by(SubjectMark.subject_name).subquery()
+
+        return self.db.query(SubjectMark).filter(
+            SubjectMark.student_id == student_id,
+            and_(
+                SubjectMark.subject_name == latest_subquery.c.subject_name,
+                SubjectMark.assessment_date == latest_subquery.c.max_date
+            )
+        ).order_by(SubjectMark.subject_name).all()
+
+    def get_performance_trends(self, student_id: str, days: int, course_id: Optional[str] = None) -> list:
+        cutoff_date = date.today() - timedelta(days=days)
+        query = self.db.query(PerformanceTrend).filter(
+            PerformanceTrend.student_id == student_id,
+            PerformanceTrend.date >= cutoff_date
+        )
+        if course_id:
+            query = query.filter(PerformanceTrend.course_id == course_id)
+        return query.order_by(PerformanceTrend.date).all()
+
+    def get_weekly_activities(self, student_id: str, days: int = 7) -> list:
+        cutoff_date = date.today() - timedelta(days=days)
+        return self.db.query(WeeklyActivity).filter(
+            WeeklyActivity.student_id == student_id,
+            WeeklyActivity.date >= cutoff_date
+        ).order_by(WeeklyActivity.date).all()
+
+    def get_skills(self, student_id: str, course_id: Optional[str] = None) -> list:
+        query = self.db.query(StudentSkill).filter(
+            StudentSkill.student_id == student_id
+        )
+        if course_id:
+            query = query.filter(StudentSkill.course_id == course_id)
+        return query.all()
+
+    def create_skill(self, data: dict) -> StudentSkill:
+        skill = StudentSkill(**data)
+        self.db.add(skill)
+        try:
+            self.db.commit()
+            self.db.refresh(skill)
+        except Exception:
+            self.db.rollback()
+            raise
+        return skill
+
+    def update_skill(self, skill_id: str, data: dict) -> StudentSkill:
+        skill = self.db.query(StudentSkill).filter(StudentSkill.id == skill_id).first()
+        if not skill:
+            raise NotFoundError("Skill assessment not found")
+        for key, value in data.items():
+            setattr(skill, key, value)
+        try:
+            self.db.commit()
+            self.db.refresh(skill)
+        except Exception:
+            self.db.rollback()
+            raise
+        return skill
+
+    def get_level(self, student_id: str) -> Optional[StudentLevel]:
+        return self.db.query(StudentLevel).filter(
+            StudentLevel.student_id == student_id
+        ).first()
+
+    def create_level(self, data: dict) -> StudentLevel:
+        existing = self.db.query(StudentLevel).filter(
+            StudentLevel.student_id == data["student_id"]
+        ).first()
+        if existing:
+            raise ConflictError("Student level already exists. Use PUT to update.")
+        level = StudentLevel(**data)
+        self.db.add(level)
+        try:
+            self.db.commit()
+            self.db.refresh(level)
+        except Exception:
+            self.db.rollback()
+            raise
+        return level
+
+    def update_level(self, student_id: str, data: dict) -> StudentLevel:
+        level = self.db.query(StudentLevel).filter(
+            StudentLevel.student_id == student_id
+        ).first()
+        if not level:
+            raise NotFoundError("Student level not found. Use POST to create.")
+        for key, value in data.items():
+            setattr(level, key, value)
+        try:
+            self.db.commit()
+            self.db.refresh(level)
+        except Exception:
+            self.db.rollback()
+            raise
+        return level
+
+    def get_subject_marks(self, student_id: str, subject_name: Optional[str] = None,
+                          assessment_type: Optional[str] = None, days: int = 90) -> list:
+        cutoff_date = date.today() - timedelta(days=days)
+        query = self.db.query(SubjectMark).filter(
+            SubjectMark.student_id == student_id,
+            SubjectMark.assessment_date >= cutoff_date
+        )
+        if subject_name:
+            query = query.filter(SubjectMark.subject_name == subject_name)
+        if assessment_type:
+            query = query.filter(SubjectMark.assessment_type == assessment_type)
+        return query.order_by(desc(SubjectMark.assessment_date)).all()
+
+    def create_subject_mark(self, data: dict) -> SubjectMark:
+        mark = SubjectMark(**data)
+        self.db.add(mark)
+        try:
+            self.db.commit()
+            self.db.refresh(mark)
+        except Exception:
+            self.db.rollback()
+            raise
+
+        try:
+            self.update_trend(data["student_id"])
+        except Exception:
+            pass
+
+        return mark
+
+    def get_improvement_areas(self, student_id: str, status_filter: Optional[str] = None,
+                              priority: Optional[str] = None) -> list:
+        query = self.db.query(ImprovementArea).filter(
+            ImprovementArea.student_id == student_id
+        )
+        if status_filter:
+            query = query.filter(ImprovementArea.status == status_filter)
+        if priority:
+            query = query.filter(ImprovementArea.priority == priority)
+        return query.order_by(
+            ImprovementArea.priority.desc(),
+            ImprovementArea.identified_date
+        ).all()
+
+    def create_improvement_area(self, data: dict) -> ImprovementArea:
+        improvement = ImprovementArea(**data)
+        self.db.add(improvement)
+        try:
+            self.db.commit()
+            self.db.refresh(improvement)
+        except Exception:
+            self.db.rollback()
+            raise
+        return improvement
+
+    def update_improvement_area(self, improvement_id: str, data: dict) -> ImprovementArea:
+        improvement = self.db.query(ImprovementArea).filter(
+            ImprovementArea.id == improvement_id
+        ).first()
+        if not improvement:
+            raise NotFoundError("Improvement area not found")
+        for key, value in data.items():
+            setattr(improvement, key, value)
+        try:
+            self.db.commit()
+            self.db.refresh(improvement)
+        except Exception:
+            self.db.rollback()
+            raise
+        return improvement
+
+    def delete_improvement_area(self, improvement_id: str) -> None:
+        improvement = self.db.query(ImprovementArea).filter(
+            ImprovementArea.id == improvement_id
+        ).first()
+        if not improvement:
+            raise NotFoundError("Improvement area not found")
+        self.db.delete(improvement)
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def get_analytics_summary(self, student_id: str) -> dict:
+        thirty_days_ago = date.today() - timedelta(days=30)
+        week_ago = date.today() - timedelta(days=7)
+
+        avg_performance = self.db.query(func.avg(PerformanceTrend.score)).filter(
+            PerformanceTrend.student_id == student_id,
+            PerformanceTrend.date >= thirty_days_ago
+        ).scalar() or 0
+
+        total_hours = self.db.query(func.sum(WeeklyActivity.hours_studied)).filter(
+            WeeklyActivity.student_id == student_id,
+            WeeklyActivity.date >= week_ago
+        ).scalar() or 0
+
+        total_assignments = self.db.query(func.sum(WeeklyActivity.assignments_completed)).filter(
+            WeeklyActivity.student_id == student_id,
+            WeeklyActivity.date >= week_ago
+        ).scalar() or 0
+
+        avg_skill = self.db.query(func.avg(StudentSkill.skill_value)).filter(
+            StudentSkill.student_id == student_id
+        ).scalar() or 0
+
+        active_improvements = self.db.query(func.count(ImprovementArea.id)).filter(
+            ImprovementArea.student_id == student_id,
+            ImprovementArea.status == "active"
+        ).scalar() or 0
+
+        return {
+            "average_performance": float(avg_performance),
+            "total_study_hours_week": float(total_hours),
+            "total_assignments_week": int(total_assignments),
+            "average_skill_level": float(avg_skill),
+            "active_improvement_areas": int(active_improvements)
+        }
+
+    def create_performance_trend(self, data: dict) -> PerformanceTrend:
+        trend = PerformanceTrend(**data)
+        self.db.add(trend)
+        try:
+            self.db.commit()
+            self.db.refresh(trend)
+        except Exception:
+            self.db.rollback()
+            raise
+        return trend
+
+    def create_weekly_activity(self, data: dict) -> WeeklyActivity:
+        activity = WeeklyActivity(**data)
+        self.db.add(activity)
+        try:
+            self.db.commit()
+            self.db.refresh(activity)
+        except Exception:
+            self.db.rollback()
+            raise
+        return activity
