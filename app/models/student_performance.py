@@ -78,8 +78,8 @@ class StudentLevel(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     student_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    grade = Column(String(50), nullable=False)  # e.g., "Grade 10", "Grade 11"
-    stream = Column(String(50))  # e.g., "Science", "Arts", "Commerce"
+    grade = Column(String(50), nullable=False)  
+    stream = Column(String(50))  
     overall_progress = Column(Numeric(5, 2), default=0.0)  # Overall progress percentage (0-100)
     academic_year = Column(String(20))  # e.g., "2024-2025"
     created_at = Column(DateTime, default=func.now())
