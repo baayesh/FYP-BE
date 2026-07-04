@@ -5,6 +5,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.core.dependencies import get_admin_user, get_teacher_or_admin
 from app.services.performance_service import PerformanceService
+from app.services.student import StudentService
 from app.models.user import User
 from app.schemas.student_performance import (
     PerformanceTrendCreate,
@@ -39,8 +40,8 @@ async def get_complete_dashboard(
 ):
     """Get complete dashboard data for a student including performance trend,
     weekly activity, skills assessment, student level, subject marks, and improvement areas."""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     data = service.get_complete_dashboard_data(str(student.id), days)
 
     dashboard = DashboardSummary(
@@ -63,8 +64,8 @@ async def get_performance_trend(
     db: Session = Depends(get_db)
 ):
     """Get student's performance trend over time"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     trends = service.get_performance_trends(str(student.id), days, course_id)
 
     return APIResponse(
@@ -101,8 +102,8 @@ async def get_weekly_activity(
     db: Session = Depends(get_db)
 ):
     """Get student's weekly activity data"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     activities = service.get_weekly_activities(str(student.id), days)
 
     return APIResponse(
@@ -136,8 +137,8 @@ async def get_student_skills(
     db: Session = Depends(get_db)
 ):
     """Get student's skill assessments"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     skills = service.get_skills(str(student.id), course_id)
 
     return APIResponse(
@@ -187,8 +188,8 @@ async def get_student_level(
     db: Session = Depends(get_db)
 ):
     """Get student's current academic level"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     level = service.get_level(str(student.id))
 
     if not level:
@@ -243,8 +244,8 @@ async def get_subject_marks(
     db: Session = Depends(get_db)
 ):
     """Get student's subject marks"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     marks = service.get_subject_marks(str(student.id), subject_name, assessment_type, days)
 
     return APIResponse(
@@ -279,8 +280,8 @@ async def get_improvement_areas(
     db: Session = Depends(get_db)
 ):
     """Get student's improvement areas"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     improvements = service.get_improvement_areas(str(student.id), status_filter, priority)
 
     return APIResponse(
@@ -346,8 +347,8 @@ async def get_analytics_summary(
     db: Session = Depends(get_db)
 ):
     """Get analytics summary for student"""
+    student = StudentService(db).get_student_by_email(email)
     service = PerformanceService(db)
-    student = service.get_student_by_email(email)
     summary = service.get_analytics_summary(str(student.id))
 
     return APIResponse(

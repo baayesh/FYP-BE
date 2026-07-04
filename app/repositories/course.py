@@ -134,7 +134,7 @@ class CourseRepository:
         self.db.refresh(enrollment)
         return enrollment
 
-    def count_enrolled_students(self, course_id: UUID) -> int:
+    def count_enrolled_students(self, course_id: str) -> int:
         """Count enrolled students in course"""
         return self.db.query(func.count(CourseEnrollment.id)).filter(
             and_(

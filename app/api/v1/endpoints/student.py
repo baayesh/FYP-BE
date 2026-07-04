@@ -1,47 +1,21 @@
 import os
 import uuid
-from datetime import datetime
-from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Request, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import text, and_
+
 from typing import Optional, List
 
-from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_student_user
 from app.core.exceptions import NotFoundError, ValidationError
-from app.schemas.common import APIResponse, StudentDashboardStats, PerformanceData
-from app.schemas.course import CourseListResponse
-from app.schemas.assignment import AssignmentResponse
-from app.schemas.lesson import LessonCompletionRequest, StudentLessonAnswerRequest, StudentLessonAnswerResponse
-from app.schemas.quiz import QuizSubmitRequest, QuizSubmitResponse
-from app.models.user import User, UserRole
-from app.models.course import Lesson
-from app.models.quiz import Quiz, QuizQuestion, QuizAttempt
-from app.models.student_lesson import StudentLesson
+from app.schemas.common import APIResponse
+from app.schemas.lesson import StudentLessonAnswerRequest
+from app.schemas.quiz import QuizSubmitRequest
+from app.models.user import User
 from app.services.student import StudentService
-from app.services.performance_service import PerformanceService
 
 router = APIRouter()
 
-
-def get_student_by_email(email: str, db: Session) -> User:
-    """Get student user by email and validate role"""
-    user = db.query(User).filter(
-        and_(User.email == email, User.role == UserRole.STUDENT)
-    ).first()
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Student not found with the provided email"
-        )
-    if user.status.value != "active":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Student account is not active"
-        )
-    return user
 
 # Dashboard endpoints
 @router.get("/dashboard/stats", response_model=APIResponse)
@@ -51,19 +25,18 @@ async def get_dashboard_stats(
 ):
     """Get student dashboard statistics by email"""
     try:
-        user = db.query(User).filter(User.email == email).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
         student_service = StudentService(db)
-        stats = student_service.get_dashboard_stats(user.id)
-        
+        student = student_service.get_student_by_email(email)
+        stats = student_service.get_dashboard_stats(student.id)
+
         return APIResponse(
             success=True,
             data=stats
         )
-    except HTTPException:
-        raise
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -82,6 +55,10 @@ async def get_performance_data(
             success=True,
             data=performance
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -102,6 +79,10 @@ async def get_courses(
             success=True,
             data=courses
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -120,6 +101,10 @@ async def get_course_details(
             success=True,
             data=course
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -138,6 +123,10 @@ async def enroll_in_course(
             success=True,
             data=result
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -149,8 +138,8 @@ async def get_student_grades(
 ):
     """Get student's grades with per-subject summaries and overall average"""
     try:
-        student = get_student_by_email(email, db)
         student_service = StudentService(db)
+        student = student_service.get_student_by_email(email)
         grades_data = student_service.get_grades(student.id, db)
 
         return APIResponse(
@@ -158,6 +147,10 @@ async def get_student_grades(
             data=grades_data,
             message="Grades retrieved successfully"
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -171,8 +164,8 @@ async def get_assignments(
 ):
     """Get all assignments for a student by email"""
     try:
-        student = get_student_by_email(email, db)
         student_service = StudentService(db)
+        student = student_service.get_student_by_email(email)
         assignments = student_service.get_assignments(student.id, status, course_id)
         
         return APIResponse(
@@ -182,8 +175,10 @@ async def get_assignments(
                 "count": len(assignments)
             }
         )
-    except HTTPException:
-        raise
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -195,16 +190,18 @@ async def get_assignment_details(
 ):
     """Get assignment details"""
     try:
-        student = get_student_by_email(email, db)
         student_service = StudentService(db)
+        student = student_service.get_student_by_email(email)
         assignment = student_service.get_assignment_details(student.id, assignment_id)
         
         return APIResponse(
             success=True,
             data=assignment
         )
-    except HTTPException:
-        raise
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -221,8 +218,8 @@ async def submit_assignment(
 ):
     """Submit an assignment — accepts multipart files + text content"""
     try:
-        student = get_student_by_email(email, db)
         student_service = StudentService(db)
+        student = student_service.get_student_by_email(email)
 
         file_data = []
         if files:
@@ -247,11 +244,6 @@ async def submit_assignment(
             files=file_data if file_data else None,
         )
 
-        try:
-            PerformanceService(db).log_activity(str(student.id), assignments_completed=1)
-        except Exception:
-            pass
-
         return APIResponse(
             success=True,
             data=result,
@@ -275,33 +267,20 @@ async def mark_lesson_completed(
         print(f"Marking lesson completed for lesson_id: {lesson_id}")
         
         student_service = StudentService(db)
-        quiz_questions = student_service.generate_lesson_quiz(lesson_id, student_id)
-
-        lesson = db.query(Lesson).filter(Lesson.id == lesson_id).first()
-        hours = Decimal(str(round((lesson.duration or 0) / 60, 2))) if lesson else Decimal("0")
-
-        try:
-            PerformanceService(db).log_activity(
-                student_id,
-                lessons_viewed=1,
-                hours_studied=hours
-            )
-        except Exception:
-            pass
+        result = student_service.generate_lesson_quiz(lesson_id, student_id)
 
         return APIResponse(
             success=True,
-            data={"message": quiz_questions},
+            data=result,
             message="Lesson completion request received"
         )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"Error in mark_lesson_completed: {type(e).__name__} - {str(e)}")
-        return APIResponse(
-            success=False,
-            message=f"Error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Submit lesson answers
 @router.post("/submit-lesson-answers", response_model=APIResponse)
@@ -347,6 +326,10 @@ async def get_spaced_repetition_quizzes(
             success=True,
             data=result
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -365,6 +348,10 @@ async def get_spaced_repetition_quiz(
             success=True,
             data=result
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -379,69 +366,17 @@ async def submit_quiz(
 ):
     """Submit answers for a quiz and get scored result."""
     try:
-        quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
-        if not quiz:
-            raise HTTPException(status_code=404, detail="Quiz not found")
-
-        questions = db.query(QuizQuestion).filter(
-            QuizQuestion.quiz_id == quiz_id
-        ).order_by(QuizQuestion.order_index).all()
-
-        if not questions:
-            raise HTTPException(status_code=400, detail="Quiz has no questions")
-
-        answer_map = {a.question_id: a.answer for a in body.answers}
-
-        correct_count = 0
-        total_points = 0
-        earned_points = 0
-
-        for q in questions:
-            student_ans = answer_map.get(q.id, "").strip().lower()
-            correct_ans = q.correct_answer.strip().lower()
-            total_points += q.points
-            if student_ans == correct_ans:
-                correct_count += 1
-                earned_points += q.points
-
-        score = round((earned_points / total_points) * 100, 2) if total_points > 0 else 0
-        passed = score >= quiz.passing_score
-
-        attempt = QuizAttempt(
-            quiz_id=quiz_id,
-            student_id=body.student_id,
-            submitted_at=datetime.utcnow(),
-            score=score,
-            passed=passed,
-            answers=[a.dict() for a in body.answers]
-        )
-        db.add(attempt)
-        db.commit()
-        db.refresh(attempt)
-
-        try:
-            PerformanceService(db).update_trend(body.student_id)
-            PerformanceService(db).log_activity(body.student_id, quizzes_completed=1)
-        except Exception:
-            pass
-
+        service = StudentService(db)
+        answers_data = [{"question_id": a.question_id, "answer": a.answer} for a in body.answers]
+        result = service.submit_quiz(quiz_id, body.student_id, answers_data)
         return APIResponse(
             success=True,
             message="Quiz submitted successfully",
-            data=QuizSubmitResponse(
-                attempt_id=attempt.id,
-                quiz_id=quiz_id,
-                student_id=body.student_id,
-                score=score,
-                total=float(total_points),
-                passed=passed,
-                correct_count=correct_count,
-                total_questions=len(questions),
-            ).dict()
+            data=result
         )
-
-    except HTTPException:
-        raise
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

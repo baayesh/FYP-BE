@@ -2,17 +2,17 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timedelta
-from sqlalchemy import text
+from sqlalchemy import text, and_
 
 
 from app.repositories.user import UserRepository
 from app.repositories.course import CourseRepository, LessonRepository
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.course import Course, Lesson
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentFile, AssignmentEnrollment, AssignmentStatus
 from app.models.grade import Grade, GradeItemType
 from app.models.essay import Essay, EssaySubmission
-from app.models.quiz import Quiz
+from app.models.quiz import Quiz, QuizQuestion, QuizAttempt
 from app.models.student_lesson import StudentLesson
 from app.core.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
@@ -24,6 +24,17 @@ class StudentService:
         self.user_repo = UserRepository(db)
         self.course_repo = CourseRepository(db)
         self.lesson_repo = LessonRepository(db)
+
+    def get_student_by_email(self, email: str) -> User:
+        """Get student user by email and validate role"""
+        user = self.db.query(User).filter(
+            and_(User.email == email, User.role == UserRole.STUDENT)
+        ).first()
+        if not user:
+            raise NotFoundError("Student not found with the provided email")
+        if user.status.value != "active":
+            raise ValidationError("Student account is not active")
+        return user
 
     def get_dashboard_stats(self, student_id: UUID) -> Dict[str, Any]:
         """Get student dashboard statistics"""
@@ -455,6 +466,11 @@ class StudentService:
             self.db.rollback()
             raise ValidationError(f"Failed to submit assignment: {str(e)}")
 
+        try:
+            PerformanceService(self.db).log_activity(student_id, assignments_completed=1)
+        except Exception:
+            pass
+
         return {
             "submission_id": submission.id,
             "assignment_id": submission.assignment_id,
@@ -598,13 +614,16 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
         return score
 
 # generate lesson quiz
-    def generate_lesson_quiz(self, lesson_id: str, student_id: Optional[str] = None) -> str:
+    def generate_lesson_quiz(self, lesson_id: str, student_id: Optional[str] = None) -> Dict[str, Any]:
         """Generate quiz questions for a lesson using AI"""
         print(f"Generating quiz for lesson_id: {lesson_id}, student_id: {student_id}")
         # Fetch lesson content from database
         lesson = self.db.query(Lesson).filter(Lesson.id == lesson_id).first()
         if not lesson:
             raise NotFoundError("Lesson not found")
+
+        from decimal import Decimal
+        hours = Decimal(str(round((lesson.duration or 0) / 60, 2)))
         
         from google import genai; client = genai.Client(api_key=settings.GOOGLE_API_KEY)
         if lesson.content:
@@ -712,9 +731,80 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
                 self.db.rollback()
                 raise ValidationError(f"Failed to save quiz data: {str(e)}")
         
-        return response.text
+        try:
+            PerformanceService(self.db).log_activity(
+                student_id,
+                lessons_viewed=1,
+                hours_studied=hours
+            )
+        except Exception:
+            pass
+
+        return {
+            "quiz_questions": response.text,
+            "duration_hours": float(hours)
+        }
     
     
+    def submit_quiz(self, quiz_id: str, student_id: str, answers: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Submit answers for a quiz and get scored result."""
+        quiz = self.db.query(Quiz).filter(Quiz.id == quiz_id).first()
+        if not quiz:
+            raise NotFoundError("Quiz not found")
+
+        questions = self.db.query(QuizQuestion).filter(
+            QuizQuestion.quiz_id == quiz_id
+        ).order_by(QuizQuestion.order_index).all()
+
+        if not questions:
+            raise ValidationError("Quiz has no questions")
+
+        answer_map = {a["question_id"]: a["answer"] for a in answers}
+
+        correct_count = 0
+        total_points = 0
+        earned_points = 0
+
+        for q in questions:
+            student_ans = answer_map.get(q.id, "").strip().lower()
+            correct_ans = q.correct_answer.strip().lower()
+            total_points += q.points
+            if student_ans == correct_ans:
+                correct_count += 1
+                earned_points += q.points
+
+        score = round((earned_points / total_points) * 100, 2) if total_points > 0 else 0
+        passed = score >= quiz.passing_score
+
+        attempt = QuizAttempt(
+            quiz_id=quiz_id,
+            student_id=student_id,
+            submitted_at=datetime.utcnow(),
+            score=score,
+            passed=passed,
+            answers=answers
+        )
+        self.db.add(attempt)
+        self.db.commit()
+        self.db.refresh(attempt)
+
+        try:
+            PerformanceService(self.db).update_trend(student_id)
+            PerformanceService(self.db).log_activity(student_id, quizzes_completed=1)
+        except Exception:
+            pass
+
+        return {
+            "attempt_id": attempt.id,
+            "quiz_id": quiz_id,
+            "student_id": student_id,
+            "score": score,
+            "total": float(total_points),
+            "passed": passed,
+            "correct_count": correct_count,
+            "total_questions": len(questions),
+        }
+
     def get_spaced_repetition_quizzes(self, student_id: str) -> Dict[str, Any]:
         """Get spaced repetition quizzes for a student based on time intervals"""
         

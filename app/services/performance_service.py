@@ -22,6 +22,7 @@ class PerformanceService:
     def __init__(self, db: Session):
         self.db = db
 
+    #compute overall score based on quizzes, grades, lessons, and subject marks
     def compute_overall_score(self, student_id: str) -> Decimal:
         all_scores: List[float] = []
         cutoff = datetime.utcnow() - timedelta(days=settings.PERFORMANCE_TREND_LOOKBACK_DAYS)
@@ -97,6 +98,7 @@ class PerformanceService:
 
         return trend
 
+    #update weekly_activity table with increments for a student on the current date
     def log_activity(self, student_id: str, **increments):
         today = date.today()
         day_name = today.strftime("%a")
@@ -299,16 +301,6 @@ class PerformanceService:
 
         avg = sum(all_scores) / len(all_scores)
         return Decimal(str(round(avg, 2)))
-
-    def get_student_by_email(self, email: str) -> User:
-        user = self.db.query(User).filter(
-            and_(User.email == email, User.role == UserRole.STUDENT)
-        ).first()
-        if not user:
-            raise NotFoundError("Student not found with the provided email")
-        if user.status.value != "active":
-            raise ValidationError("Student account is not active")
-        return user
 
     def get_complete_dashboard_data(self, student_id: str, days: int = 30) -> dict:
         cutoff_date = date.today() - timedelta(days=days)
