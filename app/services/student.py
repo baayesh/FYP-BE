@@ -8,7 +8,7 @@ from sqlalchemy import text, and_
 from app.repositories.user import UserRepository
 from app.repositories.course import CourseRepository, LessonRepository
 from app.models.user import User, UserRole
-from app.models.course import Course, Lesson
+from app.models.course import Course, Lesson, EnrollmentStatus
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentFile, AssignmentEnrollment, AssignmentStatus
 from app.models.grade import Grade, GradeItemType
 from app.models.essay import Essay, EssaySubmission
@@ -77,7 +77,7 @@ class StudentService:
         student_id_str = str(student_id)
 
         results = (
-            db.query(Grade, Course)
+            self.db.query(Grade, Course)
             .join(Course, Grade.course_id == Course.id)
             .filter(Grade.student_id == student_id_str)
             .order_by(Grade.graded_at.desc())
@@ -101,25 +101,25 @@ class StudentService:
         if assignment_ids:
             item_names.update({
                 a.id: a.title
-                for a in db.query(Assignment).filter(Assignment.id.in_(assignment_ids)).all()
+                for a in self.db.query(Assignment).filter(Assignment.id.in_(assignment_ids)).all()
             })
 
         if essay_ids:
             item_names.update({
                 e.id: e.title
-                for e in db.query(Essay).filter(Essay.id.in_(essay_ids)).all()
+                for e in self.db.query(Essay).filter(Essay.id.in_(essay_ids)).all()
             })
 
         if quiz_ids:
             item_names.update({
                 q.id: q.title
-                for q in db.query(Quiz).filter(Quiz.id.in_(quiz_ids)).all()
+                for q in self.db.query(Quiz).filter(Quiz.id.in_(quiz_ids)).all()
             })
 
         feedback_map = {}
 
         if assignment_ids:
-            for sub in db.query(AssignmentSubmission).filter(
+            for sub in self.db.query(AssignmentSubmission).filter(
                 AssignmentSubmission.assignment_id.in_(assignment_ids),
                 AssignmentSubmission.student_id == student_id_str,
                 AssignmentSubmission.feedback != None
@@ -127,7 +127,7 @@ class StudentService:
                 feedback_map[sub.assignment_id] = sub.feedback
 
         if essay_ids:
-            for sub in db.query(EssaySubmission).filter(
+            for sub in self.db.query(EssaySubmission).filter(
                 EssaySubmission.essay_id.in_(essay_ids),
                 EssaySubmission.student_id == student_id_str,
                 EssaySubmission.feedback != None
@@ -238,9 +238,9 @@ class StudentService:
         # Convert status to enrollment status
         enrollment_status = None
         if status == "active":
-            enrollment_status = "active"
+            enrollment_status = EnrollmentStatus.ACTIVE
         elif status == "completed":
-            enrollment_status = "completed"
+            enrollment_status = EnrollmentStatus.COMPLETED
         
         enrolled_courses = self.course_repo.get_enrolled_courses(
             student_id, 
@@ -252,7 +252,7 @@ class StudentService:
         courses_data = []
         for course in enrolled_courses:
             # Get enrollment info
-            enrollment = self.course_repo.get_enrollment(course.id, student_id)
+            enrollment = self.course_repo.get_enrollment(UUID(course.id), student_id)
             
             course_data = {
                 "id": str(course.id),
@@ -805,6 +805,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
             "total_questions": len(questions),
         }
 
+    #get spaced repetition quizzes for a student based on time intervals
     def get_spaced_repetition_quizzes(self, student_id: str) -> Dict[str, Any]:
         """Get spaced repetition quizzes for a student based on time intervals"""
         
@@ -862,27 +863,27 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
             "message": "No quizzes available for review at this time."
         }
 
-    def get_user_details_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Get user details by email from retinify_users table"""
-        try:
-            query = text("""
-                SELECT u_id, user_email, password, user_role, age
-                FROM retinify_users
-                WHERE user_email = :email
-                LIMIT 1
-            """)
-            result = self.db.execute(query, {"email": email}).fetchone()
+    # def get_user_details_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    #     """Get user details by email from retinify_users table"""
+    #     try:
+    #         query = text("""
+    #             SELECT u_id, user_email, password, user_role, age
+    #             FROM retinify_users
+    #             WHERE user_email = :email
+    #             LIMIT 1
+    #         """)
+    #         result = self.db.execute(query, {"email": email}).fetchone()
 
-            if result:
-                return {
-                    "u_id": result[0],
-                    "user_email": result[1],
-                    "password": result[2],
-                    "user_role": result[3],
-                    "age": result[4]
-                }
-            return None
-        except Exception as e:
-            raise ValidationError(f"Error fetching user details: {str(e)}")
+    #         if result:
+    #             return {
+    #                 "u_id": result[0],
+    #                 "user_email": result[1],
+    #                 "password": result[2],
+    #                 "user_role": result[3],
+    #                 "age": result[4]
+    #             }
+    #         return None
+    #     except Exception as e:
+    #         raise ValidationError(f"Error fetching user details: {str(e)}")
 
     
