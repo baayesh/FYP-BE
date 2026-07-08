@@ -40,28 +40,6 @@ async def get_dashboard_stats(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/dashboard/performance", response_model=APIResponse)
-async def get_performance_data(
-    period: str = Query("month", regex="^(week|month|semester)$"),
-    current_user: User = Depends(get_student_user),
-    db: Session = Depends(get_db)
-):
-    """Get student performance data"""
-    try:
-        student_service = StudentService(db)
-        performance = student_service.get_performance_data(current_user.id, period)
-        
-        return APIResponse(
-            success=True,
-            data=performance
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 # Course endpoints
 @router.get("/courses", response_model=APIResponse)
 async def get_courses(

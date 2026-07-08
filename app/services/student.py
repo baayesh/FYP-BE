@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime, timedelta
-from sqlalchemy import text, and_
+from sqlalchemy import and_
 
 
 from app.repositories.user import UserRepository
@@ -73,6 +73,7 @@ class StudentService:
         elif numeric_grade >= 60: return "D"
         else: return "F"
 
+    #grades
     def get_grades(self, student_id, db=None) -> Dict[str, Any]:
         student_id_str = str(student_id)
 
@@ -204,33 +205,7 @@ class StudentService:
             "overall_average": overall_average
         }
 
-    def get_performance_data(self, student_id: UUID, period: str) -> Dict[str, Any]:
-        """Get student performance data"""
-        
-        # Mock performance data - in real implementation, calculate from actual data
-        performance = {
-            "performanceTrend": [
-                {"date": "2025-09-01", "score": 75},
-                {"date": "2025-09-15", "score": 80},
-                {"date": "2025-10-01", "score": 85}
-            ],
-            "weeklyActivity": [
-                {"day": "Mon", "hours": 2.5, "assignments": 3},
-                {"day": "Tue", "hours": 1.8, "assignments": 2},
-                {"day": "Wed", "hours": 3.0, "assignments": 1}
-            ],
-            "skillsData": [
-                {"skill": "Problem Solving", "value": 80},
-                {"skill": "Critical Thinking", "value": 75}
-            ],
-            "subjectScores": [
-                {"subject": "Mathematics", "score": 88},
-                {"subject": "Science", "score": 82}
-            ]
-        }
-        
-        return performance
-
+    #courses
     def get_courses(self, student_id: UUID, status: Optional[str] = None, 
                    search: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get student's enrolled courses"""
@@ -863,27 +838,3 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
             "message": "No quizzes available for review at this time."
         }
 
-    # def get_user_details_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-    #     """Get user details by email from retinify_users table"""
-    #     try:
-    #         query = text("""
-    #             SELECT u_id, user_email, password, user_role, age
-    #             FROM retinify_users
-    #             WHERE user_email = :email
-    #             LIMIT 1
-    #         """)
-    #         result = self.db.execute(query, {"email": email}).fetchone()
-
-    #         if result:
-    #             return {
-    #                 "u_id": result[0],
-    #                 "user_email": result[1],
-    #                 "password": result[2],
-    #                 "user_role": result[3],
-    #                 "age": result[4]
-    #             }
-    #         return None
-    #     except Exception as e:
-    #         raise ValidationError(f"Error fetching user details: {str(e)}")
-
-    
