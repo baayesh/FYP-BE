@@ -1,14 +1,17 @@
+import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 
 from app.models.user import User, UserRole
 from app.models.course import Course, CourseEnrollment, EnrollmentStatus
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentEnrollment
+from app.models.forum import ForumThread, ForumReply, ThreadCategory
+from app.core.exceptions import NotFoundError
 
 
 class TeacherAssignmentService:
@@ -144,3 +147,126 @@ class TeacherAssignmentService:
                 )
 
         return assignments_data
+
+
+class TeacherForumService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def get_threads(self, course_id: Optional[str] = None) -> Dict[str, Any]:
+        query = (
+            self.db.query(
+                ForumThread,
+                User,
+                Course,
+                func.count(ForumReply.id).label("reply_count")
+            )
+            .join(User, ForumThread.author_id == User.id)
+            .join(Course, ForumThread.course_id == Course.id)
+            .outerjoin(ForumReply, ForumReply.thread_id == ForumThread.id)
+            .group_by(ForumThread.id, User.id, Course.id)
+            .order_by(ForumThread.is_pinned.desc(), ForumThread.created_at.desc())
+        )
+
+        if course_id:
+            query = query.filter(ForumThread.course_id == course_id)
+
+        results = query.all()
+
+        threads = []
+        for thread, author, course, reply_count in results:
+            threads.append(self._thread_to_dict(thread, author, course, reply_count))
+
+        total_replies = sum(t["replies"] for t in threads)
+        total_likes = sum(t["likes"] for t in threads)
+        total_pinned = sum(1 for t in threads if t["is_pinned"])
+
+        return {
+            "threads": threads,
+            "total": len(threads),
+            "total_replies": total_replies,
+            "total_pinned": total_pinned,
+            "total_likes": total_likes,
+        }
+
+    def get_thread(self, thread_id: str) -> Dict[str, Any]:
+        result = (
+            self.db.query(
+                ForumThread,
+                User,
+                Course,
+                func.count(ForumReply.id).label("reply_count")
+            )
+            .join(User, ForumThread.author_id == User.id)
+            .join(Course, ForumThread.course_id == Course.id)
+            .outerjoin(ForumReply, ForumReply.thread_id == ForumThread.id)
+            .filter(ForumThread.id == thread_id)
+            .group_by(ForumThread.id, User.id, Course.id)
+            .first()
+        )
+
+        if not result:
+            raise NotFoundError("Thread not found")
+
+        thread, author, course, reply_count = result
+
+        # Increment views
+        thread.views += 1
+        self.db.commit()
+
+        return self._thread_to_dict(thread, author, course, reply_count)
+
+    def toggle_pin(self, thread_id: str) -> Dict[str, Any]:
+        thread = self.db.query(ForumThread).filter(ForumThread.id == thread_id).first()
+        if not thread:
+            raise NotFoundError("Thread not found")
+        thread.is_pinned = not thread.is_pinned
+        self.db.commit()
+        return {"is_pinned": thread.is_pinned}
+
+    def toggle_resolve(self, thread_id: str) -> Dict[str, Any]:
+        thread = self.db.query(ForumThread).filter(ForumThread.id == thread_id).first()
+        if not thread:
+            raise NotFoundError("Thread not found")
+        thread.is_resolved = not thread.is_resolved
+        self.db.commit()
+        return {"is_resolved": thread.is_resolved}
+
+    def mark_reply_as_answer(self, reply_id: str, thread_id: str) -> Dict[str, Any]:
+        thread = self.db.query(ForumThread).filter(ForumThread.id == thread_id).first()
+        if not thread:
+            raise NotFoundError("Thread not found")
+        reply = self.db.query(ForumReply).filter(
+            ForumReply.id == reply_id,
+            ForumReply.thread_id == thread_id
+        ).first()
+        if not reply:
+            raise NotFoundError("Reply not found")
+        reply.is_answer = not reply.is_answer
+        self.db.commit()
+        return {"is_answer": reply.is_answer}
+
+    def _thread_to_dict(self, thread: ForumThread, author: User, course: Course, reply_count: int) -> Dict[str, Any]:
+        tags = []
+        if thread.tags:
+            try:
+                tags = json.loads(thread.tags) if isinstance(thread.tags, str) else thread.tags
+            except (json.JSONDecodeError, TypeError):
+                tags = []
+
+        return {
+            "id": thread.id,
+            "title": thread.title,
+            "author": author.full_name,
+            "author_id": author.id,
+            "course": course.title,
+            "course_id": course.id,
+            "content": thread.content,
+            "replies": reply_count,
+            "likes": thread.likes or 0,
+            "is_pinned": thread.is_pinned,
+            "is_resolved": thread.is_resolved,
+            "views": thread.views or 0,
+            "createdAt": thread.created_at.isoformat() if thread.created_at else None,
+            "tags": tags,
+        }

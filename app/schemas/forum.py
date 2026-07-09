@@ -58,3 +58,8 @@ class ReplyResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ToggleLikeRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    liked: bool

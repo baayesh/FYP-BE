@@ -6,7 +6,9 @@ from sqlalchemy import func
 from app.core.database import get_db
 from app.core.dependencies import get_teacher_user
 from app.schemas.common import APIResponse
+from app.core.exceptions import NotFoundError
 from app.models.user import User, UserRole
+from app.services.teacher import TeacherForumService
 from app.models.course import Course, CourseStatus, CourseEnrollment, EnrollmentStatus
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentStatus
 from app.models.grade import Grade, GradeItemType
@@ -303,7 +305,88 @@ async def create_lesson(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-# Assignment management endpoints
+
+# ── Forum Endpoints ──
+
+@router.get("/forum/threads", response_model=APIResponse)
+async def teacher_get_threads(
+    course_id: Optional[str] = Query(None, description="Filter by course ID"),
+    db: Session = Depends(get_db),
+):
+    """Get all forum threads (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        result = service.get_threads(course_id)
+        return APIResponse(success=True, data=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/forum/threads/{thread_id}", response_model=APIResponse)
+async def teacher_get_thread(
+    thread_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get a single forum thread by ID (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        thread = service.get_thread(thread_id)
+        return APIResponse(success=True, data=thread)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/forum/threads/{thread_id}/pin", response_model=APIResponse)
+async def teacher_toggle_pin(
+    thread_id: str,
+    db: Session = Depends(get_db),
+):
+    """Toggle pin status on a thread (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        result = service.toggle_pin(thread_id)
+        return APIResponse(success=True, data=result)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/forum/threads/{thread_id}/resolve", response_model=APIResponse)
+async def teacher_toggle_resolve(
+    thread_id: str,
+    db: Session = Depends(get_db),
+):
+    """Toggle resolved status on a thread (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        result = service.toggle_resolve(thread_id)
+        return APIResponse(success=True, data=result)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/forum/threads/{thread_id}/replies/{reply_id}/mark-answer", response_model=APIResponse)
+async def teacher_mark_as_answer(
+    thread_id: str,
+    reply_id: str,
+    db: Session = Depends(get_db),
+):
+    """Mark/unmark a reply as the answer (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        result = service.mark_reply_as_answer(reply_id, thread_id)
+        return APIResponse(success=True, data=result)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ---- Assignment management endpoints ----
 @router.get("/assignments", response_model=APIResponse)
 async def get_teacher_assignments(
     teacher_id: str = Query(..., description="UUID of the teacher"),
