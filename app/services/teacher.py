@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from fastapi import HTTPException
 
 from app.models.user import User, UserRole
-from app.models.course import Course, CourseEnrollment, EnrollmentStatus
+from app.models.course import Course, CourseEnrollment, EnrollmentStatus, Lesson
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentEnrollment
 from app.models.forum import ForumThread, ForumReply, ThreadCategory
 from app.core.exceptions import NotFoundError
@@ -270,3 +270,79 @@ class TeacherForumService:
             "createdAt": thread.created_at.isoformat() if thread.created_at else None,
             "tags": tags,
         }
+
+
+class TeacherCourseService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def update_course(self, teacher_id: str, course_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        course = self.db.query(Course).filter(Course.id == course_id).first()
+        if not course:
+            raise HTTPException(status_code=404, detail="Course not found")
+        if str(course.teacher_id) != str(teacher_id):
+            raise HTTPException(status_code=403, detail="You can only update your own courses")
+
+        updatable = {"title", "description", "category", "level", "duration", "thumbnail", "status"}
+        for key, value in data.items():
+            if key in updatable and value is not None:
+                setattr(course, key, value)
+
+        self.db.commit()
+        self.db.refresh(course)
+
+        return {
+            "id": course.id,
+            "title": course.title,
+            "description": course.description,
+            "category": course.category,
+            "level": course.level,
+            "duration": course.duration,
+            "thumbnail": course.thumbnail,
+            "status": course.status.value if hasattr(course.status, 'value') else course.status,
+            "updated_at": course.updated_at.isoformat() if course.updated_at else None,
+        }
+
+    def update_lesson(self, teacher_id: str, course_id: str, lesson_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        course = self.db.query(Course).filter(Course.id == course_id).first()
+        if not course or str(course.teacher_id) != str(teacher_id):
+            raise HTTPException(status_code=403, detail="Course not found or not taught by this teacher")
+
+        lesson = self.db.query(Lesson).filter(Lesson.id == lesson_id, Lesson.course_id == course_id).first()
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        updatable = {"title", "description", "content", "duration", "duration_text", "status", "video_link", "quizzes_json", "assignments_json"}
+        for key, value in data.items():
+            if key in updatable and value is not None:
+                setattr(lesson, key, value)
+
+        self.db.commit()
+        self.db.refresh(lesson)
+
+        return {
+            "id": lesson.id,
+            "title": lesson.title,
+            "description": lesson.description,
+            "content": lesson.content,
+            "duration": lesson.duration,
+            "duration_text": lesson.duration_text,
+            "status": lesson.status,
+            "video_link": lesson.video_link,
+            "quizzes_json": lesson.quizzes_json,
+            "assignments_json": lesson.assignments_json,
+            "order_index": lesson.order_index,
+            "updated_at": lesson.updated_at.isoformat() if lesson.updated_at else None,
+        }
+
+    def delete_lesson(self, teacher_id: str, course_id: str, lesson_id: str) -> None:
+        course = self.db.query(Course).filter(Course.id == course_id).first()
+        if not course or str(course.teacher_id) != str(teacher_id):
+            raise HTTPException(status_code=403, detail="Course not found or not taught by this teacher")
+
+        lesson = self.db.query(Lesson).filter(Lesson.id == lesson_id, Lesson.course_id == course_id).first()
+        if not lesson:
+            raise HTTPException(status_code=404, detail="Lesson not found")
+
+        self.db.delete(lesson)
+        self.db.commit()

@@ -4,11 +4,10 @@ from typing import Optional, List
 from sqlalchemy import func
 
 from app.core.database import get_db
-from app.core.dependencies import get_teacher_user
 from app.schemas.common import APIResponse
 from app.core.exceptions import NotFoundError
 from app.models.user import User, UserRole
-from app.services.teacher import TeacherForumService
+from app.services.teacher import TeacherForumService, TeacherCourseService
 from app.models.course import Course, CourseStatus, CourseEnrollment, EnrollmentStatus
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentStatus
 from app.models.grade import Grade, GradeItemType
@@ -67,13 +66,13 @@ async def get_dashboard_stats(
 
 @router.post("/dashboard/stats/snapshot", response_model=APIResponse)
 async def capture_teacher_stats_snapshot(
-    current_user: User = Depends(get_teacher_user),
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
     """Capture and persist today's teacher stats snapshot and minimal timeseries."""
     try:
         service = TeacherStatsService(db)
-        saved = service.capture_snapshot(current_user.id)
+        saved = service.capture_snapshot(teacher_id)
         return APIResponse(success=True, data=saved, message="Snapshot saved")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -226,13 +225,12 @@ async def get_course_by_id(
 
 @router.post("/courses", response_model=APIResponse)
 async def create_course(
-    course_data: dict,  # Use proper schema
-    current_user: User = Depends(get_teacher_user),
+    course_data: dict,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
     """Create a new course"""
     try:
-        # Implementation here
         return APIResponse(success=True, message="Course created successfully")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -242,25 +240,18 @@ async def create_course(
 async def create_lesson(
     course_id: str,
     lesson_data: CreateLessonRequest,
-    current_user: User = Depends(get_teacher_user),
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
-    """Create a new lesson for a specific course (only if taught by the authenticated teacher)"""
+    """Create a new lesson for a specific course"""
     try:
-        # Verify the course exists and is taught by the current teacher
-        course = db.query(Course).filter(
-            Course.id == course_id,
-            Course.teacher_id == current_user.id
-        ).first()
-        
+        course = db.query(Course).filter(Course.id == course_id).first()
         if not course:
-            raise HTTPException(status_code=404, detail="Course not found or not taught by this teacher")
-        
-        # Determine the next order_index for the course
+            raise HTTPException(status_code=404, detail="Course not found")
+
         max_order = db.query(func.max(Lesson.order_index)).filter(Lesson.course_id == course_id).scalar() or 0
         next_order = max_order + 1
-        
-        # Create the lesson
+
         new_lesson = Lesson(
             course_id=course_id,
             title=lesson_data.title,
@@ -273,12 +264,11 @@ async def create_lesson(
             assignments_json=lesson_data.assignments,
             order_index=next_order
         )
-        
+
         db.add(new_lesson)
         db.commit()
         db.refresh(new_lesson)
-        
-        # Build response data
+
         lesson_dict = {
             "id": new_lesson.id,
             "title": new_lesson.title,
@@ -293,18 +283,89 @@ async def create_lesson(
             "created_at": new_lesson.created_at.isoformat() if new_lesson.created_at else None,
             "updated_at": new_lesson.updated_at.isoformat() if new_lesson.updated_at else None
         }
-        
-        return APIResponse(
-            success=True,
-            data={"lesson": lesson_dict},
-            message="Lesson created successfully"
-        )
+
+        return APIResponse(success=True, data={"lesson": lesson_dict}, message="Lesson created successfully")
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+class UpdateCourseRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=100)
+    level: Optional[str] = Field(None, max_length=50)
+    duration: Optional[str] = Field(None, max_length=50)
+    thumbnail: Optional[str] = None
+    status: Optional[str] = Field(None, pattern="^(active|draft|archived)$")
+
+class LessonUpdateRequest(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    content: Optional[str] = None
+    duration: Optional[int] = None
+    duration_text: Optional[str] = None
+    status: Optional[str] = Field(None, pattern="^(locked|unlocked)$")
+    video_link: Optional[str] = None
+    quizzes_json: Optional[list] = None
+    assignments_json: Optional[list] = None
+
+@router.put("/courses/{course_id}", response_model=APIResponse)
+async def update_course(
+    course_id: str,
+    course_data: UpdateCourseRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Update a course (teacher must be the owner)"""
+    try:
+        service = TeacherCourseService(db)
+        course = service.update_course(teacher_id, course_id, course_data.dict(exclude_unset=True))
+        return APIResponse(success=True, message="Course updated successfully", data=course)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/courses/{course_id}/lessons/{lesson_id}", response_model=APIResponse)
+async def update_lesson(
+    course_id: str,
+    lesson_id: str,
+    lesson_data: LessonUpdateRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Update a lesson (teacher must own the course)"""
+    try:
+        service = TeacherCourseService(db)
+        lesson = service.update_lesson(teacher_id, course_id, lesson_id, lesson_data.dict(exclude_unset=True))
+        return APIResponse(success=True, message="Lesson updated successfully", data=lesson)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/courses/{course_id}/lessons/{lesson_id}", response_model=APIResponse)
+async def delete_lesson(
+    course_id: str,
+    lesson_id: str,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Delete a lesson (teacher must own the course)"""
+    try:
+        service = TeacherCourseService(db)
+        service.delete_lesson(teacher_id, course_id, lesson_id)
+        return APIResponse(success=True, message="Lesson deleted successfully", data=None)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── Forum Endpoints ──
 
@@ -459,10 +520,10 @@ class GradeSubmissionRequest(BaseModel):
 async def grade_assignment(
     assignment_id: str,
     body: GradeSubmissionRequest,
-    current_user: User = Depends(get_teacher_user),
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
-    """Grade a student's assignment submission (Teacher only)."""
+    """Grade a student's assignment submission."""
     try:
         assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
         if not assignment:
@@ -470,13 +531,10 @@ async def grade_assignment(
 
         course = db.query(Course).filter(
             Course.id == assignment.course_id,
-            Course.teacher_id == current_user.id
+            Course.teacher_id == teacher_id
         ).first()
         if not course:
-            raise HTTPException(
-                status_code=403,
-                detail="You do not have permission to grade this assignment"
-            )
+            raise HTTPException(status_code=403, detail="You do not have permission to grade this assignment")
 
         submission = db.query(AssignmentSubmission).filter(
             AssignmentSubmission.assignment_id == assignment_id,
@@ -500,7 +558,7 @@ async def grade_assignment(
             grade=percentage,
             points_earned=points_earned,
             points_possible=body.max_score,
-            graded_by=current_user.id,
+            graded_by=teacher_id,
             graded_at=datetime.utcnow(),
         )
         db.add(grade_record)

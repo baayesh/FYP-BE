@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, Query, Path, status, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional, List
-from uuid import UUID
 
 from app.core.dependencies import get_db
 from app.repositories.course import CourseRepository, LessonRepository
@@ -12,23 +11,14 @@ from app.models.user import UserRole
 
 router = APIRouter()
 
-# Reusable constants (reduce duplication for linting)
-ERR_USER_NOT_FOUND = "User not found"
 ERR_COURSE_NOT_FOUND = "Course not found"
 ERR_LESSON_NOT_FOUND = "Lesson not found"
-ERR_NOT_OWNER = "You do not own this course"
-ERR_TEACHER_ONLY_CREATE = "Only teachers can create lessons"
-ERR_TEACHER_ONLY_UPDATE = "Only teachers can update lessons"
-ERR_TEACHER_ONLY_DELETE = "Only teachers can delete lessons"
-QRY_TEACHER_EMAIL = "Teacher email"
 
-# Helpers
 
 def _minutes_from_text(duration: Optional[str]) -> Optional[int]:
     if not duration:
         return None
     try:
-        # Expect formats like "15 min", "30 mins", "45m"
         digits = ''.join(ch for ch in duration if ch.isdigit())
         return int(digits) if digits else None
     except Exception:
@@ -55,27 +45,22 @@ def _lesson_to_response(lesson, progress_map) -> dict:
 @router.get("/{course_id}/lessons", response_model=APIResponse)
 def list_lessons(
     course_id: str = Path(..., description="Course ID"),
-    email: str = Query(..., description="User email for context"),
+    email: str = Query(..., description="User email for progress context"),
     db: Session = Depends(get_db)
 ):
-    user_repo = UserRepository(db)
-    course_repo = CourseRepository(db)
     lesson_repo = LessonRepository(db)
+    course_repo = CourseRepository(db)
+    user_repo = UserRepository(db)
 
-    user = user_repo.get_by_email(email)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_USER_NOT_FOUND)
-
-    # Ensure course exists
     course = course_repo.get_by_id(course_id)
     if not course:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_COURSE_NOT_FOUND)
 
     lessons = lesson_repo.get_by_course(course_id)
 
-    # Build progress map for student
     progress_map = {}
-    if user.role == UserRole.STUDENT:
+    user = user_repo.get_by_email(email)
+    if user and user.role == UserRole.STUDENT:
         progresses = lesson_repo.get_student_progress(user.id, course_id)
         for p in progresses:
             progress_map[str(p.lesson_id)] = 100.0 if p.completed else min(float(p.time_spent or 0) / max(lesson.duration or 1, 1) * 100.0, 100.0)
@@ -91,13 +76,9 @@ def get_lesson(
     email: str = Query(...),
     db: Session = Depends(get_db)
 ):
-    user_repo = UserRepository(db)
     course_repo = CourseRepository(db)
     lesson_repo = LessonRepository(db)
-
-    user = user_repo.get_by_email(email)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_USER_NOT_FOUND)
+    user_repo = UserRepository(db)
 
     course = course_repo.get_by_id(course_id)
     if not course:
@@ -108,7 +89,8 @@ def get_lesson(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_LESSON_NOT_FOUND)
 
     progress_map = {}
-    if user.role == UserRole.STUDENT:
+    user = user_repo.get_by_email(email)
+    if user and user.role == UserRole.STUDENT:
         progresses = lesson_repo.get_student_progress(user.id, course_id)
         for p in progresses:
             progress_map[str(p.lesson_id)] = 100.0 if p.completed else min(float(p.time_spent or 0) / max(lesson.duration or 1, 1) * 100.0, 100.0)
@@ -120,22 +102,14 @@ def get_lesson(
 def create_lesson(
     course_id: str,
     payload: LessonCreate,
-    email: str = Query(..., description=QRY_TEACHER_EMAIL),
     db: Session = Depends(get_db)
 ):
-    user_repo = UserRepository(db)
     course_repo = CourseRepository(db)
     lesson_repo = LessonRepository(db)
 
-    user = user_repo.get_by_email(email)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_USER_NOT_FOUND)
-    if user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERR_TEACHER_ONLY_CREATE)
-
     course = course_repo.get_by_id(course_id)
-    if not course or str(course.teacher_id) != str(user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERR_NOT_OWNER)
+    if not course:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_COURSE_NOT_FOUND)
 
     lesson_data = {
         "course_id": str(course_id),
@@ -148,7 +122,7 @@ def create_lesson(
         "duration_text": payload.duration,
         "quizzes_json": [q.dict() for q in payload.quizzes],
         "assignments_json": [a.dict() for a in payload.assignments],
-        "type": "VIDEO",  # default; not used by FE for now
+        "type": "VIDEO",
         "order_index": payload.order_index,
     }
 
@@ -161,22 +135,14 @@ def update_lesson(
     course_id: str,
     lesson_id: str,
     payload: LessonUpdate,
-    email: str = Query(..., description=QRY_TEACHER_EMAIL),
     db: Session = Depends(get_db)
 ):
-    user_repo = UserRepository(db)
     course_repo = CourseRepository(db)
     lesson_repo = LessonRepository(db)
 
-    user = user_repo.get_by_email(email)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_USER_NOT_FOUND)
-    if user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERR_TEACHER_ONLY_UPDATE)
-
     course = course_repo.get_by_id(course_id)
-    if not course or str(course.teacher_id) != str(user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERR_NOT_OWNER)
+    if not course:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_COURSE_NOT_FOUND)
 
     lesson = lesson_repo.get_by_id(lesson_id)
     if not lesson or str(lesson.course_id) != str(course_id):
@@ -209,22 +175,14 @@ def update_lesson(
 def delete_lesson(
     course_id: str,
     lesson_id: str,
-    email: str = Query(..., description=QRY_TEACHER_EMAIL),
     db: Session = Depends(get_db)
 ):
-    user_repo = UserRepository(db)
     course_repo = CourseRepository(db)
     lesson_repo = LessonRepository(db)
 
-    user = user_repo.get_by_email(email)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_USER_NOT_FOUND)
-    if user.role != UserRole.TEACHER:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERR_TEACHER_ONLY_DELETE)
-
     course = course_repo.get_by_id(course_id)
-    if not course or str(course.teacher_id) != str(user.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=ERR_NOT_OWNER)
+    if not course:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERR_COURSE_NOT_FOUND)
 
     lesson = lesson_repo.get_by_id(lesson_id)
     if not lesson or str(lesson.course_id) != str(course_id):

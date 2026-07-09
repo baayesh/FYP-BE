@@ -3,9 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
 from app.core.exceptions import NotFoundError, ValidationError
-from app.models.user import User, UserRole
 from app.schemas.course import CourseCreate, CourseUpdate
 from app.schemas.common import APIResponse
 from app.services.course import CourseService
@@ -71,13 +69,13 @@ async def get_course_detail(
 @router.post("/", response_model=APIResponse, status_code=status.HTTP_201_CREATED)
 async def create_course(
     course_data: CourseCreate,
-    current_user: User = Depends(get_current_user),
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
-    """Create a new course (Teacher only)"""
+    """Create a new course"""
     try:
         service = CourseService(db)
-        course = service.create_course(str(current_user.id), course_data.dict())
+        course = service.create_course(teacher_id, course_data.dict())
         return APIResponse(
             success=True,
             message="Course created successfully",
@@ -98,17 +96,13 @@ async def create_course(
 async def update_course(
     course_id: str,
     course_data: CourseUpdate,
-    current_user: User = Depends(get_current_user),
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
-    """Update a course (Teacher only - must be course owner)"""
+    """Update a course (must be course owner)"""
     try:
         service = CourseService(db)
-        course = service.update_course(
-            str(current_user.id),
-            course_id,
-            course_data.dict(exclude_unset=True)
-        )
+        course = service.update_course(teacher_id, course_id, course_data.dict(exclude_unset=True))
         return APIResponse(
             success=True,
             message="Course updated successfully",
@@ -128,13 +122,13 @@ async def update_course(
 @router.delete("/{course_id}", response_model=APIResponse)
 async def delete_course(
     course_id: str,
-    current_user: User = Depends(get_current_user),
+    teacher_id: str = Query(..., description="UUID of the teacher"),
     db: Session = Depends(get_db)
 ):
-    """Delete a course (Teacher only - must be course owner)"""
+    """Delete a course (must be course owner)"""
     try:
         service = CourseService(db)
-        service.delete_course(str(current_user.id), course_id)
+        service.delete_course(teacher_id, course_id)
         return APIResponse(
             success=True,
             message="Course deleted successfully",
