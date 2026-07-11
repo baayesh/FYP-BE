@@ -4,6 +4,7 @@ from sqlalchemy import func as sqlfunc, and_
 from typing import List, Optional, Dict, Any
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
+from openai import OpenAI
 
 
 from app.repositories.user import UserRepository
@@ -22,6 +23,7 @@ from app.services.performance_service import PerformanceService
 
 class StudentService:
     def __init__(self, db: Session):
+        """Initialize the student service with a database session and repositories."""
         self.db = db
         self.user_repo = UserRepository(db)
         self.course_repo = CourseRepository(db)
@@ -65,6 +67,7 @@ class StudentService:
         return stats
 
     def _to_letter_grade(self, numeric_grade: float) -> str:
+        """Helper: convert a numeric grade to a letter grade (A+ through F)."""
         if numeric_grade >= 97: return "A+"
         elif numeric_grade >= 90: return "A"
         elif numeric_grade >= 87: return "B+"
@@ -75,8 +78,8 @@ class StudentService:
         elif numeric_grade >= 60: return "D"
         else: return "F"
 
-    #grades
     def get_grades(self, student_id, db=None) -> Dict[str, Any]:
+        """Get all grades for a student, grouped by subject with summaries."""
         student_id_str = str(student_id)
 
         results = (
@@ -550,11 +553,14 @@ class StudentService:
         }
 
     def _evaluate_answers_with_ai(self, lesson: Lesson, answers: str) -> int:
-        """Evaluate student answers using Gemini AI"""
+        """Evaluate student answers using Groq AI"""
         
         score = 0
         try:
-            from google import genai; client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+            client = OpenAI(
+                api_key=settings.GROQ_API_KEY,
+                base_url="https://api.groq.com/openai/v1"
+            )
             
             if lesson is not None and lesson.content is not None:
                 prompt = f"""Based on the following lesson content, evaluate the student's answers and give a score out of 10.
@@ -567,19 +573,26 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
             else:
                 prompt = 'Please provide a score of 0 since no lesson content is available.'
             
-            print(f"Sending evaluation prompt to Gemini: {prompt}")
+            print(f"Sending evaluation prompt to Groq: {prompt}")
             
-            response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=prompt,
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
             )
             
             # Extract score from response
             try:
-                score_text = response.text.strip()
+                score_text = response.choices[0].message.content.strip()
+                # Strip markdown code block wrapping if present
+                if score_text.startswith("```"):
+                    score_text = score_text.strip("`")
+                    if score_text.startswith("json"):
+                        score_text = score_text[4:]
+                score_text = score_text.strip()
                 score = int(float(score_text))
                 score = max(0, min(10, score))  # Ensure score is between 0 and 10
-            except (ValueError, AttributeError):
+            except (ValueError, AttributeError, IndexError):
                 score = 0
             
             print(f"AI Evaluation Score: {score}/10")
@@ -590,10 +603,8 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
         
         return score
 
-#---Quiz Generation and Submission---
-# generate lesson quiz
     def generate_lesson_quiz(self, lesson_id: str, student_id: Optional[str] = None) -> Dict[str, Any]:
-        """Generate quiz questions for a lesson using AI"""
+        """Generate quiz questions for a lesson using Groq AI."""
         print(f"Generating quiz for lesson_id: {lesson_id}, student_id: {student_id}")
         # Fetch lesson content from database
         lesson = self.db.query(Lesson).filter(Lesson.id == lesson_id).first()
@@ -603,9 +614,27 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
         from decimal import Decimal
         hours = Decimal(str(round((lesson.duration or 0) / 60, 2)))
         
-        from google import genai; client = genai.Client(api_key=settings.GOOGLE_API_KEY)
+        client = OpenAI(
+            api_key=settings.GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1"
+        )
+
+        def _call_groq(prompt_text: str) -> str:
+            resp = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt_text}],
+                temperature=0.7,
+            )
+            text = resp.choices[0].message.content.strip()
+            # Strip markdown code block wrapping if present
+            if text.startswith("```"):
+                text = text.strip("`")
+                if text.startswith("json"):
+                    text = text[4:]
+            return text.strip()
+
         if lesson.content:
-            prompt = f'''Generate 10 basic MCQ questions about "{lesson.content}". 
+            prompt = f'''Generate 10 basic MCQ questions about "{lesson.content}".
 Return ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
 {{
   "difficulty": "basic",
@@ -619,8 +648,8 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
     }}
   ]
 }}'''
-            
-            prompt_2 = f'''Generate 10 intermediate MCQ questions about "{lesson.content}". 
+
+            prompt_2 = f'''Generate 10 intermediate MCQ questions about "{lesson.content}".
 Return ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
 {{
   "difficulty": "intermediate",
@@ -634,8 +663,8 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
     }}
   ]
 }}'''
-            
-            prompt_3 = f'''Generate 10 medium-advanced MCQ questions about "{lesson.content}". 
+
+            prompt_3 = f'''Generate 10 medium-advanced MCQ questions about "{lesson.content}".
 Return ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
 {{
   "difficulty": "medium-advanced",
@@ -649,8 +678,8 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
     }}
   ]
 }}'''
-            
-            prompt_4 = f'''Generate 10 advanced MCQ questions about "{lesson.content}". 
+
+            prompt_4 = f'''Generate 10 advanced MCQ questions about "{lesson.content}".
 Return ONLY a valid JSON object (no markdown, no extra text) with this exact structure:
 {{
   "difficulty": "advanced",
@@ -667,26 +696,15 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         else:
             prompt = 'Please provide lesson content to generate questions.'
             prompt_2 = prompt_3 = prompt_4 = prompt
-        
-        print(f"Sending prompt to Gemini: {prompt}")
-        
-        response = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt,
-        )
-        response_2 = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt_2,
-        )
-        response_3 = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt_3,
-        )
-        response_4 = client.models.generate_content(
-            model="gemini-2.5-flash-lite",
-            contents=prompt_4,
-        )
-        print(f"Received quiz responses: {response.text}, {response_2.text}, {response_3.text}, {response_4.text}")
+
+        print(f"Sending prompts to Groq")
+
+        response_text = _call_groq(prompt)
+        response_text_2 = _call_groq(prompt_2)
+        response_text_3 = _call_groq(prompt_3)
+        response_text_4 = _call_groq(prompt_4)
+
+        print(f"Received quiz responses: {response_text[:100]}..., {response_text_2[:100]}..., {response_text_3[:100]}..., {response_text_4[:100]}...")
         # Save quiz data to database if student_id is provided
         if student_id:
             # Create new StudentLesson record
@@ -694,13 +712,13 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
                 lesson_id=lesson_id,
                 student_id=student_id,
                 answers=None,
-                question_list_1={"content": response.text},
-                question_list_2={"content": response_2.text},
-                question_list_3={"content": response_3.text},
-                question_list_4={"content": response_4.text},
+                question_list_1={"content": response_text},
+                question_list_2={"content": response_text_2},
+                question_list_3={"content": response_text_3},
+                question_list_4={"content": response_text_4},
                 Q1_Result=None
             )
-            
+
             try:
                 self.db.add(student_lesson)
                 self.db.commit()
@@ -708,7 +726,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
             except Exception as e:
                 self.db.rollback()
                 raise ValidationError(f"Failed to save quiz data: {str(e)}")
-        
+
         try:
             PerformanceService(self.db).log_activity(
                 student_id,
@@ -719,7 +737,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
             pass
 
         return {
-            "quiz_questions": response.text,
+            "quiz_questions": response_text,
             "duration_hours": float(hours)
         }
     
@@ -843,6 +861,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
 
     # ── Forum Methods ──
     def get_threads(self, course_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get all forum threads, optionally filtered by course."""
         query = (
             self.db.query(
                 ForumThread,
@@ -879,6 +898,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         }
 
     def get_thread(self, thread_id: str) -> Dict[str, Any]:
+        """Get a single forum thread by ID and increment its view count."""
         result = (
             self.db.query(
                 ForumThread,
@@ -906,6 +926,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         return self._thread_to_dict(thread, author, course, reply_count)
 
     def create_thread(self, author_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new forum thread."""
         thread = ForumThread(
             id=str(uuid4()),
             course_id=data["course_id"],
@@ -925,6 +946,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         return self._thread_to_dict(thread, author, course, 0)
 
     def get_replies(self, thread_id: str) -> List[Dict[str, Any]]:
+        """Get all replies for a forum thread, ordered chronologically."""
         thread = self.db.query(ForumThread).filter(ForumThread.id == thread_id).first()
         if not thread:
             raise NotFoundError("Thread not found")
@@ -952,6 +974,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         ]
 
     def create_reply(self, thread_id: str, author_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new reply in a forum thread."""
         thread = self.db.query(ForumThread).filter(ForumThread.id == thread_id).first()
         if not thread:
             raise NotFoundError("Thread not found")
@@ -981,6 +1004,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         }
 
     def like_thread(self, thread_id: str, user_id: str, liked: bool) -> Dict[str, Any]:
+        """Increment or decrement the like count on a forum thread."""
         thread = self.db.query(ForumThread).filter(ForumThread.id == thread_id).first()
         if not thread:
             raise NotFoundError("Thread not found")
@@ -994,6 +1018,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
         return {"likes": thread.likes}
 
     def _thread_to_dict(self, thread: ForumThread, author: User, course: Course, reply_count: int) -> Dict[str, Any]:
+        """Helper: serialize a forum thread and its metadata into a dictionary."""
         tags = []
         if thread.tags:
             try:

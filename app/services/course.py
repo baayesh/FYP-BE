@@ -12,6 +12,7 @@ from app.services.student import StudentService
 
 class CourseService:
     def __init__(self, db: Session):
+        """Initialize the course service with a database session and course repository."""
         self.db = db
         self.course_repo = CourseRepository(db)
 

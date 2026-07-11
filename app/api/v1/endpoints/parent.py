@@ -6,7 +6,7 @@ from app.core.dependencies import get_parent_user
 from app.schemas.common import APIResponse
 from app.models.user import User
 from app.models.calendar_event import ParentChildRelationship
-from app.services.parent_stats import ParentStatsService
+from app.services.parent import ParentStatsService
 
 router = APIRouter()
 

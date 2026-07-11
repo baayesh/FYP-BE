@@ -439,4 +439,3 @@ class ParentStatsService:
             "recent_assignments": recent_assignments,
             "teacher_feedback": teacher_feedback
         }
-

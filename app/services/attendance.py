@@ -11,9 +11,11 @@ from app.models.course import Course, CourseEnrollment, EnrollmentStatus, Lesson
 
 class AttendanceService:
     def __init__(self, db: Session):
+        """Initialize the attendance service with a database session."""
         self.db = db
 
     def get_students_for_course(self, course_id: str) -> List[Dict[str, Any]]:
+        """Get all enrolled students for a given course."""
         enrollments = (
             self.db.query(CourseEnrollment)
             .options(joinedload(CourseEnrollment.student))
@@ -36,6 +38,7 @@ class AttendanceService:
     def get_attendance_records(
         self, course_id: str, lesson_id: str, date_val: date
     ) -> List[Dict[str, Any]]:
+        """Get attendance records for a specific course, lesson, and date."""
         records = (
             self.db.query(Attendance)
             .options(joinedload(Attendance.student), joinedload(Attendance.lesson))
@@ -70,6 +73,7 @@ class AttendanceService:
         records: List[Dict[str, Any]],
         marked_by: str,
     ) -> List[Dict[str, Any]]:
+        """Bulk create or update attendance records for a lesson."""
         saved = []
         for rec in records:
             status_val = rec["status"].upper() if isinstance(rec["status"], str) else rec["status"].value
@@ -129,6 +133,7 @@ class AttendanceService:
     def get_attendance_summary(
         self, course_id: str, lesson_id: str, date_val: date
     ) -> Dict[str, Any]:
+        """Get an attendance summary with counts by status for a lesson."""
         counts = (
             self.db.query(
                 Attendance.status,
@@ -172,6 +177,7 @@ class AttendanceService:
     def get_student_summary(
         self, student_id: str, course_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
+        """Get attendance summary grouped by course for a specific student."""
         filters = [Attendance.student_id == student_id]
         if course_id:
             filters.append(Attendance.course_id == course_id)
@@ -220,6 +226,7 @@ class AttendanceService:
     def get_student_history(
         self, student_id: str, course_id: Optional[str] = None, page: int = 1, limit: int = 20
     ) -> Dict[str, Any]:
+        """Get paginated attendance history for a specific student."""
         filters = [Attendance.student_id == student_id]
         if course_id:
             filters.append(Attendance.course_id == course_id)
@@ -253,6 +260,7 @@ class AttendanceService:
     def get_course_history(
         self, course_id: str, page: int = 1, limit: int = 20
     ) -> Dict[str, Any]:
+        """Get paginated attendance history grouped by lesson for a course."""
         subq = (
             self.db.query(
                 Attendance.lesson_id,

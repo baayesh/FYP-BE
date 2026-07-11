@@ -21,4 +21,4 @@ from .student_performance import (
     SubjectMark,
     ImprovementArea
 )
-from .teacher_stats import TeacherStats, TeacherStatTimeseries
+from .teacher import TeacherStats, TeacherStatTimeseries

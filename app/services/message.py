@@ -15,9 +15,11 @@ from app.models.calendar_event import ParentChildRelationship
 
 class MessageService:
     def __init__(self, db: Session):
+        """Initialize the message service with a database session."""
         self.db = db
 
     def _can_message_user(self, sender: User, target_id: str) -> bool:
+        """Helper: check if a user is allowed to message another user based on roles."""
         if sender.role == UserRole.ADMIN:
             return True
 
@@ -85,6 +87,7 @@ class MessageService:
         return False
 
     def _get_participant_info(self, user: User) -> dict:
+        """Helper: serialize user info into a participant dictionary."""
         return {
             "id": user.id,
             "name": user.full_name,
@@ -96,6 +99,7 @@ class MessageService:
                             subject: Optional[str] = None,
                             context_type: Optional[str] = None,
                             context_id: Optional[str] = None) -> Conversation:
+        """Create a new conversation with the given participants."""
         all_ids = list(set([current_user.id] + participant_ids))
 
         for pid in participant_ids:
@@ -129,6 +133,7 @@ class MessageService:
         return conversation
 
     def get_user_conversations(self, current_user: User, page: int = 1, limit: int = 20) -> dict:
+        """Get paginated conversations for the current user."""
         offset = (page - 1) * limit
 
         base_query = self.db.query(Conversation).join(
@@ -184,6 +189,7 @@ class MessageService:
         }
 
     def get_conversation_by_id(self, conversation_id: str, current_user: User) -> Optional[dict]:
+        """Get a conversation by ID for the current user."""
         conv = self.db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not conv:
             return None
@@ -231,6 +237,7 @@ class MessageService:
 
     def get_conversation_messages(self, conversation_id: str, current_user: User,
                                   page: int = 1, limit: int = 50) -> Optional[dict]:
+        """Get paginated messages for a conversation."""
         conv = self.db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not conv:
             return None
@@ -283,6 +290,7 @@ class MessageService:
         }
 
     def send_message(self, conversation_id: str, current_user: User, content: str) -> Optional[Message]:
+        """Send a message to all participants in a conversation."""
         conv = self.db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not conv:
             return None
@@ -334,6 +342,7 @@ class MessageService:
         return message
 
     def mark_as_read(self, conversation_id: str, current_user: User) -> bool:
+        """Mark all unread messages in a conversation as read for the current user."""
         participant = self.db.query(ConversationParticipant).filter(
             ConversationParticipant.conversation_id == conversation_id,
             ConversationParticipant.user_id == current_user.id,
@@ -358,6 +367,7 @@ class MessageService:
         return True
 
     def get_unread_count(self, current_user: User) -> int:
+        """Get total unread message count for the current user."""
         count = self.db.query(Message).filter(
             Message.recipient_id == current_user.id,
             Message.is_read == False
@@ -365,6 +375,7 @@ class MessageService:
         return count
 
     def add_participant(self, conversation_id: str, current_user: User, user_id: str) -> bool:
+        """Add a participant to an existing conversation."""
         conv = self.db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not conv:
             return False
@@ -402,6 +413,7 @@ class MessageService:
         return True
 
     def remove_participant(self, conversation_id: str, current_user: User, user_id: str) -> bool:
+        """Remove a participant from a conversation."""
         participant = self.db.query(ConversationParticipant).filter(
             ConversationParticipant.conversation_id == conversation_id,
             ConversationParticipant.user_id == user_id,
@@ -425,6 +437,7 @@ class MessageService:
         return True
 
     def get_eligible_recipients(self, current_user: User) -> list[dict]:
+        """Get users the current user is allowed to message based on role relationships."""
         if current_user.role == UserRole.ADMIN:
             users = self.db.query(User).filter(User.status == "active").all()
             return [self._get_participant_info(u) for u in users]

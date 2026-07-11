@@ -71,6 +71,7 @@ class PerformanceService:
         return Decimal(str(round(avg, 2)))
 
     def update_trend(self, student_id: str) -> PerformanceTrend:
+        """Compute and upsert today's overall performance trend for a student."""
         overall = self.compute_overall_score(student_id)
 
         trend = self.db.query(PerformanceTrend).filter(
@@ -129,6 +130,7 @@ class PerformanceService:
             raise
 
     def compute_subject_mark(self, student_id: str, subject_name: str, course_id: str = None) -> Optional[SubjectMark]:
+        """Compute and upsert a subject mark for a student based on grades and quizzes."""
         all_scores: List[float] = []
 
         grades_query = self.db.query(Grade).filter(
@@ -191,6 +193,7 @@ class PerformanceService:
         return mark
 
     def backfill_trends(self, student_id: Optional[str] = None):
+        """Backfill performance trends for one or all students from historical data."""
         if student_id:
             student_ids = [student_id]
         else:
@@ -256,6 +259,7 @@ class PerformanceService:
             self.db.commit()
 
     def _compute_score_up_to(self, student_id: str, max_date: date) -> Decimal:
+        """Helper: compute the overall performance score for a student up to a given date."""
         all_scores: List[float] = []
         max_dt = datetime.combine(max_date, datetime.max.time())
 
@@ -303,6 +307,7 @@ class PerformanceService:
         return Decimal(str(round(avg, 2)))
 
     def get_complete_dashboard_data(self, student_id: str, days: int = 30) -> dict:
+        """Get all dashboard data for a student including trends, activities, skills, and marks."""
         cutoff_date = date.today() - timedelta(days=days)
         week_ago = date.today() - timedelta(days=7)
 
@@ -337,6 +342,7 @@ class PerformanceService:
         }
 
     def _get_latest_subject_marks(self, student_id: str) -> list:
+        """Helper: get the most recent subject mark for each subject for a student."""
         latest_subquery = self.db.query(
             SubjectMark.subject_name,
             func.max(SubjectMark.assessment_date).label('max_date')
@@ -353,6 +359,7 @@ class PerformanceService:
         ).order_by(SubjectMark.subject_name).all()
 
     def get_performance_trends(self, student_id: str, days: int, course_id: Optional[str] = None) -> list:
+        """Get performance trend records for a student within a given number of days."""
         cutoff_date = date.today() - timedelta(days=days)
         query = self.db.query(PerformanceTrend).filter(
             PerformanceTrend.student_id == student_id,
@@ -363,6 +370,7 @@ class PerformanceService:
         return query.order_by(PerformanceTrend.date).all()
 
     def get_weekly_activities(self, student_id: str, days: int = 7) -> list:
+        """Get weekly activity records for a student within a given number of days."""
         cutoff_date = date.today() - timedelta(days=days)
         return self.db.query(WeeklyActivity).filter(
             WeeklyActivity.student_id == student_id,
@@ -370,6 +378,7 @@ class PerformanceService:
         ).order_by(WeeklyActivity.date).all()
 
     def get_skills(self, student_id: str, course_id: Optional[str] = None) -> list:
+        """Get skill assessments for a student, optionally filtered by course."""
         query = self.db.query(StudentSkill).filter(
             StudentSkill.student_id == student_id
         )
@@ -378,6 +387,7 @@ class PerformanceService:
         return query.all()
 
     def create_skill(self, data: dict) -> StudentSkill:
+        """Create a new skill assessment record."""
         skill = StudentSkill(**data)
         self.db.add(skill)
         try:
@@ -389,6 +399,7 @@ class PerformanceService:
         return skill
 
     def update_skill(self, skill_id: str, data: dict) -> StudentSkill:
+        """Update an existing skill assessment record by ID."""
         skill = self.db.query(StudentSkill).filter(StudentSkill.id == skill_id).first()
         if not skill:
             raise NotFoundError("Skill assessment not found")
@@ -403,11 +414,13 @@ class PerformanceService:
         return skill
 
     def get_level(self, student_id: str) -> Optional[StudentLevel]:
+        """Get the current level record for a student."""
         return self.db.query(StudentLevel).filter(
             StudentLevel.student_id == student_id
         ).first()
 
     def create_level(self, data: dict) -> StudentLevel:
+        """Create a new student level record, raising ConflictError if one already exists."""
         existing = self.db.query(StudentLevel).filter(
             StudentLevel.student_id == data["student_id"]
         ).first()
@@ -424,6 +437,7 @@ class PerformanceService:
         return level
 
     def update_level(self, student_id: str, data: dict) -> StudentLevel:
+        """Update an existing student level record by student ID."""
         level = self.db.query(StudentLevel).filter(
             StudentLevel.student_id == student_id
         ).first()
@@ -441,6 +455,7 @@ class PerformanceService:
 
     def get_subject_marks(self, student_id: str, subject_name: Optional[str] = None,
                           assessment_type: Optional[str] = None, days: int = 90) -> list:
+        """Get subject marks for a student with optional filters for subject, type, and date range."""
         cutoff_date = date.today() - timedelta(days=days)
         query = self.db.query(SubjectMark).filter(
             SubjectMark.student_id == student_id,
@@ -453,6 +468,7 @@ class PerformanceService:
         return query.order_by(desc(SubjectMark.assessment_date)).all()
 
     def create_subject_mark(self, data: dict) -> SubjectMark:
+        """Create a new subject mark record and update the performance trend."""
         mark = SubjectMark(**data)
         self.db.add(mark)
         try:
@@ -471,6 +487,7 @@ class PerformanceService:
 
     def get_improvement_areas(self, student_id: str, status_filter: Optional[str] = None,
                               priority: Optional[str] = None) -> list:
+        """Get improvement areas for a student, optionally filtered by status and priority."""
         query = self.db.query(ImprovementArea).filter(
             ImprovementArea.student_id == student_id
         )
@@ -484,6 +501,7 @@ class PerformanceService:
         ).all()
 
     def create_improvement_area(self, data: dict) -> ImprovementArea:
+        """Create a new improvement area record."""
         improvement = ImprovementArea(**data)
         self.db.add(improvement)
         try:
@@ -495,6 +513,7 @@ class PerformanceService:
         return improvement
 
     def update_improvement_area(self, improvement_id: str, data: dict) -> ImprovementArea:
+        """Update an existing improvement area record by ID."""
         improvement = self.db.query(ImprovementArea).filter(
             ImprovementArea.id == improvement_id
         ).first()
@@ -511,6 +530,7 @@ class PerformanceService:
         return improvement
 
     def delete_improvement_area(self, improvement_id: str) -> None:
+        """Delete an improvement area record by ID."""
         improvement = self.db.query(ImprovementArea).filter(
             ImprovementArea.id == improvement_id
         ).first()
@@ -524,6 +544,7 @@ class PerformanceService:
             raise
 
     def get_analytics_summary(self, student_id: str) -> dict:
+        """Get a summary of analytics for a student including performance, hours, and skills."""
         thirty_days_ago = date.today() - timedelta(days=30)
         week_ago = date.today() - timedelta(days=7)
 
@@ -560,6 +581,7 @@ class PerformanceService:
         }
 
     def create_performance_trend(self, data: dict) -> PerformanceTrend:
+        """Create a new performance trend record."""
         trend = PerformanceTrend(**data)
         self.db.add(trend)
         try:
@@ -571,6 +593,7 @@ class PerformanceService:
         return trend
 
     def create_weekly_activity(self, data: dict) -> WeeklyActivity:
+        """Create a new weekly activity record."""
         activity = WeeklyActivity(**data)
         self.db.add(activity)
         try:

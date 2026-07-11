@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     # AI Settings
     OPENAI_API_KEY: str = ""
     GOOGLE_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
     AI_ENABLED: bool = False
     AI_MODEL: str = "gpt-4"
     AI_RATE_LIMIT: int = 100  # requests per hour

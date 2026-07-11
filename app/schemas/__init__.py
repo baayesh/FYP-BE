@@ -24,3 +24,10 @@ from .quiz import (
     QuizSubmitRequest,
     QuizSubmitResponse,
 )
+from .teacher import (
+    StatPoint,
+    DistributionItem,
+    CourseAvgGrade,
+    TeacherStatsSnapshot,
+    TeacherDashboardStats,
+)

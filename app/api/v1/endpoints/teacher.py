@@ -5,14 +5,18 @@ from sqlalchemy import func
 
 from app.core.database import get_db
 from app.schemas.common import APIResponse
+from app.schemas.forum import CreateReplyRequest, ToggleLikeRequest
 from app.core.exceptions import NotFoundError
 from app.models.user import User, UserRole
-from app.services.teacher import TeacherForumService, TeacherCourseService
 from app.models.course import Course, CourseStatus, CourseEnrollment, EnrollmentStatus
 from app.models.assignment import Assignment, AssignmentSubmission, AssignmentStatus
 from app.models.grade import Grade, GradeItemType
-from app.services.teacher_stats import TeacherStatsService
-from app.services.teacher import TeacherAssignmentService
+from app.services.teacher import (
+    TeacherForumService,
+    TeacherCourseService,
+    TeacherAssignmentService,
+    TeacherStatsService,
+)
 from app.services.performance_service import PerformanceService
 
 from pydantic import BaseModel, Field
@@ -366,6 +370,56 @@ async def delete_lesson(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/forum/threads/{thread_id}/replies", response_model=APIResponse)
+async def teacher_get_replies(
+    thread_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get all replies for a thread (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        replies = service.get_replies(thread_id)
+        return APIResponse(success=True, data={"replies": replies})
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/forum/threads/{thread_id}/replies", response_model=APIResponse, status_code=201)
+async def teacher_create_reply(
+    thread_id: str,
+    data: CreateReplyRequest,
+    db: Session = Depends(get_db),
+):
+    """Add a reply to a thread (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        reply = service.create_reply(thread_id, data.author_id, data.model_dump())
+        return APIResponse(success=True, data=reply, message="Reply added successfully")
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/forum/threads/{thread_id}/like", response_model=APIResponse)
+async def teacher_toggle_like(
+    thread_id: str,
+    data: ToggleLikeRequest,
+    db: Session = Depends(get_db),
+):
+    """Like or unlike a forum thread (teacher)"""
+    try:
+        service = TeacherForumService(db)
+        result = service.like_thread(thread_id, data.user_id, data.liked)
+        return APIResponse(success=True, data=result, message="Like updated" if data.liked else "Like removed")
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ── Forum Endpoints ──
 
