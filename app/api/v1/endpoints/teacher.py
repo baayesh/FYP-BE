@@ -19,9 +19,12 @@ from app.services.teacher import (
 )
 from app.services.performance_service import PerformanceService
 
+import uuid
 from pydantic import BaseModel, Field
 from datetime import datetime
 from app.models.course import Lesson, LessonType
+from app.models.calendar_event import CalendarEvent, EventType
+from app.schemas.common import CalendarEventCreate
 
 router = APIRouter()
 
@@ -635,6 +638,217 @@ async def grade_assignment(
             }
         )
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Calendar Event Endpoints ──
+
+@router.get("/calendar-events", response_model=APIResponse)
+def get_teacher_calendar_events(
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    course_id: Optional[str] = Query(None, description="Filter by course ID"),
+    start_date: Optional[str] = Query(None, description="Filter start (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="Filter end (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+):
+    """Get calendar events created by a teacher."""
+    try:
+        teacher = db.query(User).filter(User.id == teacher_id, User.role == UserRole.TEACHER).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        query = db.query(CalendarEvent).options(
+            joinedload(CalendarEvent.course),
+            joinedload(CalendarEvent.creator),
+        ).filter(CalendarEvent.creator_id == teacher_id)
+
+        if course_id:
+            query = query.filter(CalendarEvent.course_id == course_id)
+
+        if start_date:
+            try:
+                dt = datetime.strptime(start_date, "%Y-%m-%d")
+                query = query.filter(CalendarEvent.start_time >= dt)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD")
+
+        if end_date:
+            try:
+                dt = datetime.strptime(end_date, "%Y-%m-%d")
+                query = query.filter(CalendarEvent.end_time <= dt.replace(hour=23, minute=59, second=59))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD")
+
+        events = query.order_by(CalendarEvent.start_time.asc()).all()
+
+        result = []
+        for event in events:
+            result.append({
+                "id": str(event.id),
+                "title": event.title,
+                "description": event.description,
+                "type": event.type.value if hasattr(event.type, 'value') else str(event.type),
+                "start_time": event.start_time.isoformat() if event.start_time else None,
+                "end_time": event.end_time.isoformat() if event.end_time else None,
+                "location": event.location,
+                "link": event.link,
+                "course_id": str(event.course_id) if event.course_id else None,
+                "course_name": event.course.title if event.course else None,
+                "creator_id": str(event.creator_id),
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            })
+
+        return APIResponse(
+            success=True,
+            data={"events": result, "count": len(result)},
+            message="Calendar events retrieved successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/calendar-events", response_model=APIResponse, status_code=201)
+def create_calendar_event(
+    event_data: CalendarEventCreate,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db),
+):
+    """Create a new calendar event."""
+    try:
+        teacher = db.query(User).filter(User.id == teacher_id, User.role == UserRole.TEACHER).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        new_event = CalendarEvent(
+            id=str(uuid.uuid4()),
+            creator_id=teacher_id,
+            title=event_data.title,
+            description=event_data.description,
+            type=EventType(event_data.type),
+            start_time=event_data.start_time,
+            end_time=event_data.end_time,
+            location=event_data.location,
+            link=event_data.link,
+            course_id=str(event_data.course_id) if event_data.course_id else None,
+        )
+
+        db.add(new_event)
+        db.commit()
+        db.refresh(new_event)
+
+        course_name = None
+        if new_event.course:
+            course_name = new_event.course.title
+
+        return APIResponse(
+            success=True,
+            data={
+                "id": str(new_event.id),
+                "title": new_event.title,
+                "description": new_event.description,
+                "type": new_event.type.value if hasattr(new_event.type, 'value') else str(new_event.type),
+                "start_time": new_event.start_time.isoformat() if new_event.start_time else None,
+                "end_time": new_event.end_time.isoformat() if new_event.end_time else None,
+                "location": new_event.location,
+                "link": new_event.link,
+                "course_id": str(new_event.course_id) if new_event.course_id else None,
+                "course_name": course_name,
+                "creator_id": str(new_event.creator_id),
+                "created_at": new_event.created_at.isoformat() if new_event.created_at else None,
+            },
+            message="Calendar event created successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/calendar-events/{event_id}", response_model=APIResponse)
+def update_calendar_event(
+    event_id: str,
+    event_data: CalendarEventCreate,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db),
+):
+    """Update a calendar event."""
+    try:
+        event = db.query(CalendarEvent).filter(
+            CalendarEvent.id == event_id,
+            CalendarEvent.creator_id == teacher_id
+        ).first()
+        if not event:
+            raise HTTPException(status_code=404, detail="Calendar event not found")
+
+        event.title = event_data.title
+        event.description = event_data.description
+        event.type = EventType(event_data.type)
+        event.start_time = event_data.start_time
+        event.end_time = event_data.end_time
+        event.location = event_data.location
+        event.link = event_data.link
+        event.course_id = str(event_data.course_id) if event_data.course_id else None
+
+        db.commit()
+        db.refresh(event)
+
+        course_name = event.course.title if event.course else None
+
+        return APIResponse(
+            success=True,
+            data={
+                "id": str(event.id),
+                "title": event.title,
+                "description": event.description,
+                "type": event.type.value if hasattr(event.type, 'value') else str(event.type),
+                "start_time": event.start_time.isoformat() if event.start_time else None,
+                "end_time": event.end_time.isoformat() if event.end_time else None,
+                "location": event.location,
+                "link": event.link,
+                "course_id": str(event.course_id) if event.course_id else None,
+                "course_name": course_name,
+                "creator_id": str(event.creator_id),
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+            },
+            message="Calendar event updated successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/calendar-events/{event_id}", response_model=APIResponse)
+def delete_calendar_event(
+    event_id: str,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db),
+):
+    """Delete a calendar event."""
+    try:
+        event = db.query(CalendarEvent).filter(
+            CalendarEvent.id == event_id,
+            CalendarEvent.creator_id == teacher_id
+        ).first()
+        if not event:
+            raise HTTPException(status_code=404, detail="Calendar event not found")
+
+        db.delete(event)
+        db.commit()
+
+        return APIResponse(
+            success=True,
+            data=None,
+            message="Calendar event deleted successfully"
+        )
     except HTTPException:
         raise
     except Exception as e:
