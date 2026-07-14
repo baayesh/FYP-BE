@@ -40,32 +40,6 @@ class StudentService:
             raise ValidationError("Student account is not active")
         return user
 
-    def get_dashboard_stats(self, student_id: UUID) -> Dict[str, Any]:
-        """Get student dashboard statistics"""
-        print('called to get__dashboard_stats')
-        # Get enrolled courses
-        enrolled_courses = self.course_repo.get_enrolled_courses(student_id)
-        active_courses = len(enrolled_courses)
-
-        # Mock data for now - in real implementation, query actual data
-        stats = {
-            "activeCourses": active_courses,
-            "upcomingAssignments": 8,  
-            "completedLessons": 24,   
-            "averageGrade": 85.5,     
-            "recentActivity": [
-                {
-                    "id": "1",
-                    "type": "assignment",
-                    "title": "Math Assignment 1",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "status": "completed"
-                }
-            ]
-        }
-        
-        return stats
-
     def _to_letter_grade(self, numeric_grade: float) -> str:
         """Helper: convert a numeric grade to a letter grade (A+ through F)."""
         if numeric_grade >= 97: return "A+"
