@@ -17,30 +17,6 @@ from app.services.student import StudentService
 
 router = APIRouter()
 
-
-# Dashboard endpoints
-@router.get("/dashboard/stats", response_model=APIResponse)
-async def get_dashboard_stats(
-    email: str = Query(..., description="User email to get dashboard stats for"),
-    db: Session = Depends(get_db)
-):
-    """Get student dashboard statistics by email"""
-    try:
-        student_service = StudentService(db)
-        student = student_service.get_student_by_email(email)
-        stats = student_service.get_dashboard_stats(student.id)
-
-        return APIResponse(
-            success=True,
-            data=stats
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 # Course endpoints
 @router.get("/courses", response_model=APIResponse)
 async def get_courses(
