@@ -3,6 +3,7 @@ from sqlalchemy import func, and_, desc
 from typing import Optional, List
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 import logging
 
 from app.models.quiz import QuizAttempt
@@ -342,21 +343,39 @@ class PerformanceService:
         }
 
     def _get_latest_subject_marks(self, student_id: str) -> list:
-        """Helper: get the most recent subject mark for each subject for a student."""
-        latest_subquery = self.db.query(
-            SubjectMark.subject_name,
-            func.max(SubjectMark.assessment_date).label('max_date')
-        ).filter(
-            SubjectMark.student_id == student_id
-        ).group_by(SubjectMark.subject_name).subquery()
-
-        return self.db.query(SubjectMark).filter(
-            SubjectMark.student_id == student_id,
-            and_(
-                SubjectMark.subject_name == latest_subquery.c.subject_name,
-                SubjectMark.assessment_date == latest_subquery.c.max_date
+        """Get subject marks based on graded work, grouped by course (same source as Grades page)."""
+        results = (
+            self.db.query(
+                Course.id,
+                Course.title,
+                func.avg(Grade.grade),
+                func.max(Grade.graded_at)
             )
-        ).order_by(SubjectMark.subject_name).all()
+            .join(Course, Grade.course_id == Course.id)
+            .filter(Grade.student_id == student_id, Grade.grade.isnot(None))
+            .group_by(Course.id, Course.title)
+            .all()
+        )
+
+        marks = []
+        for course_id, course_title, avg_grade, latest_grade_date in results:
+            score = float(avg_grade) if avg_grade else 0
+            assessment_date = latest_grade_date.date() if latest_grade_date else date.today()
+
+            marks.append({
+                "id": str(uuid4()),
+                "student_id": student_id,
+                "subject_name": course_title,
+                "score": Decimal(str(round(score, 2))),
+                "max_score": Decimal("100"),
+                "assessment_type": "Overall",
+                "assessment_date": assessment_date,
+                "course_id": course_id,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            })
+
+        return marks
 
     def get_performance_trends(self, student_id: str, days: int, course_id: Optional[str] = None) -> list:
         """Get performance trend records for a student within a given number of days."""
