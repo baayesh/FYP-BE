@@ -472,6 +472,14 @@ class PerformanceService:
             raise
         return level
 
+    def upsert_level(self, student_id: str, data: dict) -> StudentLevel:
+        """Create or update a student level record for a given student."""
+        try:
+            return self.update_level(student_id, data)
+        except NotFoundError:
+            data_with_id = {"student_id": student_id, **data}
+            return self.create_level(data_with_id)
+
     def get_subject_marks(self, student_id: str, subject_name: Optional[str] = None,
                           assessment_type: Optional[str] = None, days: int = 90) -> list:
         """Get subject marks for a student with optional filters for subject, type, and date range."""

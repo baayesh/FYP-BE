@@ -501,7 +501,7 @@ class StudentService:
             setattr(student_lesson, "Q4_Result", score)  # type: ignore[arg-type]
         else:
             setattr(student_lesson, "Q1_Result", score)  # type: ignore[arg-type]
-        
+        #TODO: Update the answers field with the latest answers
         try:
             self.db.commit()
             self.db.refresh(student_lesson)

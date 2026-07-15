@@ -28,6 +28,7 @@ class UserBase(BaseModel):
 # User Registration Schema
 class UserRegistration(UserBase):
     password: str = Field(..., min_length=8)
+    grade: Optional[str] = Field(None, max_length=50)
 
     @validator('password')
     def validate_password(cls, v):
@@ -70,6 +71,7 @@ class AdminUserUpdate(BaseModel):
     status: Optional[UserStatus] = None
     phone: Optional[str] = Field(None, max_length=20)
     password: Optional[str] = Field(None, min_length=8)
+    grade: Optional[str] = Field(None, max_length=50)
 
 # Authentication Response Schema
 class AuthResponse(BaseModel):

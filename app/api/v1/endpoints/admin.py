@@ -18,6 +18,8 @@ from app.models.system_alert import SystemAlert
 from app.repositories.user import UserRepository
 from app.repositories.course import CourseRepository
 from app.services.auth import AuthService
+from app.models.student_performance import StudentLevel
+from app.services.performance_service import PerformanceService
 
 router = APIRouter()
 
@@ -160,6 +162,13 @@ async def get_all_users(
         )
         total = repo.count(role=role_filter, status=status_filter, search=search)
         
+        student_levels = {
+            sl.student_id: sl
+            for sl in db.query(StudentLevel).filter(
+                StudentLevel.student_id.in_([u.id for u in users if u.role == UserRole.STUDENT])
+            ).all()
+        } if any(u.role == UserRole.STUDENT for u in users) else {}
+
         users_data = [
             {
                 "id": u.id,
@@ -173,6 +182,7 @@ async def get_all_users(
                 "lastLogin": u.last_login.isoformat() if u.last_login else None,
                 "emailVerified": u.email_verified,
                 "createdAt": u.created_at.isoformat() if u.created_at else None,
+                "grade": student_levels.get(u.id).grade if u.id in student_levels else None,
             }
             for u in users
         ]
@@ -196,6 +206,15 @@ async def create_user(
     try:
         auth_service = AuthService(db)
         result = auth_service.register_user(user_data)
+
+        if user_data.role == UserRole.STUDENT and user_data.grade:
+            perf_service = PerformanceService(db)
+            perf_service.upsert_level(
+                result["userId"],
+                {"grade": user_data.grade}
+            )
+            result["grade"] = user_data.grade
+
         return APIResponse(success=True, data=result, message="User created successfully")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -214,18 +233,29 @@ async def update_user(
             raise HTTPException(status_code=404, detail="User not found")
         
         update_dict = update_data.dict(exclude_none=True)
+        grade = update_dict.pop("grade", None) if "grade" in update_dict else None
+        
         if "password" in update_dict:
             update_dict["password_hash"] = get_password_hash(update_dict.pop("password"))
         
         updated_user = repo.update(user_id, update_dict)
-        return APIResponse(success=True, data={
+
+        response_data = {
             "id": updated_user.id,
             "email": updated_user.email,
             "firstName": updated_user.first_name,
             "lastName": updated_user.last_name,
             "role": updated_user.role.value,
             "status": updated_user.status.value,
-        }, message="User updated successfully")
+        }
+
+        effective_role = update_data.role or user.role
+        if effective_role == UserRole.STUDENT and grade:
+            perf_service = PerformanceService(db)
+            level = perf_service.upsert_level(user_id, {"grade": grade})
+            response_data["grade"] = level.grade
+
+        return APIResponse(success=True, data=response_data, message="User updated successfully")
     except HTTPException:
         raise
     except Exception as e:
