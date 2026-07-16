@@ -21,12 +21,48 @@ from app.services.performance_service import PerformanceService
 
 import uuid
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
 from app.models.course import Lesson, LessonType
+from app.models.student_performance import ImprovementArea, StudentSkill
+from app.schemas.student_performance import ImprovementAreaResponse, StudentSkillResponse
 from app.models.calendar_event import CalendarEvent, EventType
 from app.schemas.common import CalendarEventCreate
 
 router = APIRouter()
+
+PREDEFINED_SKILLS = [
+    "Problem Solving", "Critical Thinking", "Communication",
+    "Collaboration", "Time Management", "Creativity",
+    "Leadership", "Analytical Skills", "Adaptability",
+    "Research Skills"
+]
+
+class CreateImprovementAreaRequest(BaseModel):
+    student_id: str
+    subject_name: str = Field(..., min_length=1, max_length=100)
+    reason: str = Field(..., min_length=1)
+    suggestion: str = Field(..., min_length=1)
+    priority: str = Field("medium", pattern="^(low|medium|high)$")
+    course_id: Optional[str] = None
+
+class UpdateImprovementAreaRequest(BaseModel):
+    subject_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    reason: Optional[str] = Field(None, min_length=1)
+    suggestion: Optional[str] = Field(None, min_length=1)
+    priority: Optional[str] = Field(None, pattern="^(low|medium|high)$")
+    status: Optional[str] = Field(None, pattern="^(active|in_progress|resolved)$")
+    resolved_date: Optional[date] = None
+
+class CreateStudentSkillRequest(BaseModel):
+    student_id: str
+    skill_name: str = Field(..., min_length=1, max_length=100)
+    skill_value: float = Field(..., ge=0, le=100)
+    course_id: Optional[str] = None
+
+class UpdateStudentSkillRequest(BaseModel):
+    skill_value: Optional[float] = Field(None, ge=0, le=100)
+    course_id: Optional[str] = None
 
 # New schema for lesson creation request
 class QuizItem(BaseModel):
@@ -848,6 +884,300 @@ def delete_calendar_event(
             success=True,
             data=None,
             message="Calendar event deleted successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Student Performance Endpoints ──
+
+@router.get("/predefined-skills", response_model=APIResponse)
+async def get_predefined_skills():
+    """Return the list of predefined skill names."""
+    return APIResponse(
+        success=True,
+        data={"skills": PREDEFINED_SKILLS},
+        message="Predefined skills retrieved successfully"
+    )
+
+
+@router.get("/students", response_model=APIResponse)
+async def get_teacher_students(
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    course_id: Optional[str] = Query(None, description="Filter by course ID"),
+    db: Session = Depends(get_db)
+):
+    """Get all students enrolled in the teacher's courses, optionally filtered by course."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        query = db.query(User).join(
+            CourseEnrollment, CourseEnrollment.student_id == User.id
+        ).join(
+            Course, Course.id == CourseEnrollment.course_id
+        ).filter(
+            Course.teacher_id == teacher_id,
+            CourseEnrollment.status == EnrollmentStatus.ACTIVE,
+            User.role == UserRole.STUDENT
+        )
+
+        if course_id:
+            query = query.filter(Course.id == course_id)
+
+        students = query.distinct(User.id).order_by(User.first_name, User.last_name).all()
+
+        students_data = [
+            {
+                "id": s.id,
+                "first_name": s.first_name,
+                "last_name": s.last_name,
+                "email": s.email,
+            }
+            for s in students
+        ]
+
+        return APIResponse(
+            success=True,
+            data={"students": students_data},
+            message=f"Found {len(students_data)} student(s)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/improvement-areas", response_model=APIResponse)
+async def get_improvement_areas(
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    student_id: str = Query(..., description="UUID of the student"),
+    db: Session = Depends(get_db)
+):
+    """Get improvement areas for a specific student."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        improvements = service.get_improvement_areas(student_id)
+
+        return APIResponse(
+            success=True,
+            data={
+                "improvement_areas": [
+                    ImprovementAreaResponse.model_validate(i).model_dump()
+                    for i in improvements
+                ]
+            },
+            message=f"Retrieved {len(improvements)} improvement area(s)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/improvement-areas", response_model=APIResponse, status_code=201)
+async def create_improvement_area(
+    body: CreateImprovementAreaRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Create a new improvement area for a student."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        data = body.model_dump()
+        data["identified_date"] = date.today()
+        improvement = service.create_improvement_area(data)
+
+        return APIResponse(
+            success=True,
+            data=ImprovementAreaResponse.model_validate(improvement).model_dump(),
+            message="Improvement area created successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/improvement-areas/{improvement_id}", response_model=APIResponse)
+async def update_improvement_area(
+    improvement_id: str,
+    body: UpdateImprovementAreaRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Update an existing improvement area."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        improvement = service.update_improvement_area(
+            improvement_id, body.model_dump(exclude_unset=True)
+        )
+
+        return APIResponse(
+            success=True,
+            data=ImprovementAreaResponse.model_validate(improvement).model_dump(),
+            message="Improvement area updated successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/improvement-areas/{improvement_id}", response_model=APIResponse)
+async def delete_improvement_area(
+    improvement_id: str,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Delete an improvement area."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        service.delete_improvement_area(improvement_id)
+
+        return APIResponse(
+            success=True,
+            data=None,
+            message="Improvement area deleted successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/student-skills", response_model=APIResponse)
+async def get_student_skills(
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    student_id: str = Query(..., description="UUID of the student"),
+    db: Session = Depends(get_db)
+):
+    """Get skill assessments for a specific student."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        skills = service.get_skills(student_id)
+
+        return APIResponse(
+            success=True,
+            data={
+                "skills": [
+                    StudentSkillResponse.model_validate(s).model_dump()
+                    for s in skills
+                ]
+            },
+            message=f"Retrieved {len(skills)} skill(s)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/student-skills", response_model=APIResponse, status_code=201)
+async def create_student_skill(
+    body: CreateStudentSkillRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Create a new skill assessment for a student."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        data = body.model_dump()
+        data["last_assessed"] = date.today()
+        data["skill_value"] = Decimal(str(data.pop("skill_value")))
+        skill = service.create_skill(data)
+
+        return APIResponse(
+            success=True,
+            data=StudentSkillResponse.model_validate(skill).model_dump(),
+            message="Skill assessment created successfully"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/student-skills/{skill_id}", response_model=APIResponse)
+async def update_student_skill(
+    skill_id: str,
+    body: UpdateStudentSkillRequest,
+    teacher_id: str = Query(..., description="UUID of the teacher"),
+    db: Session = Depends(get_db)
+):
+    """Update a skill assessment (re-assessment with new value)."""
+    try:
+        teacher = db.query(User).filter(
+            User.id == teacher_id,
+            User.role == UserRole.TEACHER
+        ).first()
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Teacher not found")
+
+        service = PerformanceService(db)
+        data = body.model_dump(exclude_unset=True)
+        if "skill_value" in data:
+            data["skill_value"] = Decimal(str(data["skill_value"]))
+        data["last_assessed"] = date.today()
+        skill = service.update_skill(skill_id, data)
+
+        return APIResponse(
+            success=True,
+            data=StudentSkillResponse.model_validate(skill).model_dump(),
+            message="Skill assessment updated successfully"
         )
     except HTTPException:
         raise
