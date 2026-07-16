@@ -28,7 +28,6 @@ class StudentService:
         self.user_repo = UserRepository(db)
         self.course_repo = CourseRepository(db)
         self.lesson_repo = LessonRepository(db)
-
     def get_student_by_email(self, email: str) -> User:
         """Get student user by email and validate role"""
         user = self.db.query(User).filter(
