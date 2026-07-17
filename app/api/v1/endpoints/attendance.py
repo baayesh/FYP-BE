@@ -149,49 +149,6 @@ async def mark_attendance(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@teacher_router.get("/courses/{course_id}/attendance/summary", response_model=APIResponse)
-async def get_attendance_summary(
-    course_id: str,
-    lesson_id: str = Query(..., description="Lesson ID"),
-    date_val: date = Query(..., alias="date", description="Date of the lesson session"),
-    teacher_id: str = Query(..., description="UUID of the teacher"),
-    db: Session = Depends(get_db),
-):
-    """Get attendance summary stats for a lesson session"""
-    try:
-        _verify_teacher(teacher_id, db)
-        _verify_course_ownership(course_id, teacher_id, db)
-
-        service = AttendanceService(db)
-        summary = service.get_attendance_summary(course_id, lesson_id, date_val)
-        return APIResponse(success=True, data={"summary": summary}, message="Attendance summary retrieved")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@teacher_router.get("/attendance/history", response_model=APIResponse)
-async def get_attendance_history(
-    course_id: str = Query(..., description="Course ID"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    teacher_id: str = Query(..., description="UUID of the teacher"),
-    db: Session = Depends(get_db),
-):
-    """Get paginated attendance history grouped by lesson session"""
-    try:
-        _verify_teacher(teacher_id, db)
-        _verify_course_ownership(course_id, teacher_id, db)
-
-        service = AttendanceService(db)
-        history = service.get_course_history(course_id, page, limit)
-        return APIResponse(success=True, data=history, message="Attendance history retrieved")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # ── Parent Endpoints ──
 

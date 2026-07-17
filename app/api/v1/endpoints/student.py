@@ -10,84 +10,14 @@ from app.core.dependencies import get_student_user
 from app.core.exceptions import NotFoundError, ValidationError
 from app.schemas.common import APIResponse
 from app.schemas.lesson import StudentLessonAnswerRequest
-from app.schemas.quiz import QuizSubmitRequest
 from app.schemas.forum import CreateThreadRequest, CreateReplyRequest, ToggleLikeRequest
 from app.models.user import User
 from app.services.student import StudentService
 
 router = APIRouter()
-
-# Course endpoints
-@router.get("/courses", response_model=APIResponse)
-async def get_courses(
-    status: Optional[str] = Query(None, regex="^(active|completed|archived)$"),
-    search: Optional[str] = None,
-    current_user: User = Depends(get_student_user),
-    db: Session = Depends(get_db)
-):
-    """Get all student courses"""
-    try:
-        student_service = StudentService(db)
-        courses = student_service.get_courses(current_user.id, status, search)
-        
-        return APIResponse(
-            success=True,
-            data=courses
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/courses/{course_id}", response_model=APIResponse)
-async def get_course_details(
-    course_id: str,
-    current_user: User = Depends(get_student_user),
-    db: Session = Depends(get_db)
-):
-    """Get course details"""
-    try:
-        student_service = StudentService(db)
-        course = student_service.get_course_details(current_user.id, course_id)
-        
-        return APIResponse(
-            success=True,
-            data=course
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/courses/{course_id}/enroll", response_model=APIResponse)
-async def enroll_in_course(
-    course_id: str,
-    current_user: User = Depends(get_student_user),
-    db: Session = Depends(get_db)
-):
-    """Enroll in course"""
-    try:
-        student_service = StudentService(db)
-        result = student_service.enroll_in_course(current_user.id, course_id)
-        
-        return APIResponse(
-            success=True,
-            data=result
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 # Grades endpoint
 @router.get("/grades", response_model=APIResponse)
-async def get_student_grades(
+def get_student_grades(
     email: str = Query(..., description="Student's email address"),
     db: Session = Depends(get_db)
 ):
@@ -111,7 +41,7 @@ async def get_student_grades(
 
 # Assignment endpoints
 @router.get("/assignments", response_model=APIResponse)
-async def get_assignments(
+def get_assignments(
     email: str = Query(..., description="Student's email address"),
     status: Optional[str] = Query(None, regex="^(pending|submitted|graded)$"),
     course_id: Optional[str] = None,
@@ -129,29 +59,6 @@ async def get_assignments(
                 "assignments": assignments,
                 "count": len(assignments)
             }
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/assignments/{assignment_id}", response_model=APIResponse)
-async def get_assignment_details(
-    assignment_id: str,
-    email: str = Query(..., description="Student's email address"),
-    db: Session = Depends(get_db)
-):
-    """Get assignment details"""
-    try:
-        student_service = StudentService(db)
-        student = student_service.get_student_by_email(email)
-        assignment = student_service.get_assignment_details(student.id, assignment_id)
-        
-        return APIResponse(
-            success=True,
-            data=assignment
         )
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -213,7 +120,7 @@ async def submit_assignment(
 
 # Lesson endpoints
 @router.post("/lesson-completed/{lesson_id}", response_model=APIResponse)
-async def mark_lesson_completed(
+def mark_lesson_completed(
     lesson_id: str,
     student_id: str = Query(..., description="Student ID for lesson completion"),
     db: Session = Depends(get_db)
@@ -240,7 +147,7 @@ async def mark_lesson_completed(
 # ── Forum Endpoints ──
 
 @router.get("/forum/threads", response_model=APIResponse)
-async def student_get_threads(
+def student_get_threads(
     course_id: Optional[str] = Query(None, description="Filter by course ID"),
     db: Session = Depends(get_db),
 ):
@@ -254,7 +161,7 @@ async def student_get_threads(
 
 
 @router.get("/forum/threads/{thread_id}", response_model=APIResponse)
-async def student_get_thread(
+def student_get_thread(
     thread_id: str,
     db: Session = Depends(get_db),
 ):
@@ -270,7 +177,7 @@ async def student_get_thread(
 
 
 @router.post("/forum/threads", response_model=APIResponse, status_code=status.HTTP_201_CREATED)
-async def student_create_thread(
+def student_create_thread(
     data: CreateThreadRequest,
     db: Session = Depends(get_db),
 ):
@@ -286,7 +193,7 @@ async def student_create_thread(
 
 
 @router.get("/forum/threads/{thread_id}/replies", response_model=APIResponse)
-async def student_get_replies(
+def student_get_replies(
     thread_id: str,
     db: Session = Depends(get_db),
 ):
@@ -302,7 +209,7 @@ async def student_get_replies(
 
 
 @router.post("/forum/threads/{thread_id}/replies", response_model=APIResponse, status_code=status.HTTP_201_CREATED)
-async def student_create_reply(
+def student_create_reply(
     thread_id: str,
     data: CreateReplyRequest,
     db: Session = Depends(get_db),
@@ -319,7 +226,7 @@ async def student_create_reply(
 
 
 @router.post("/forum/threads/{thread_id}/like", response_model=APIResponse)
-async def student_toggle_like(
+def student_toggle_like(
     thread_id: str,
     data: ToggleLikeRequest,
     db: Session = Depends(get_db),
@@ -337,7 +244,7 @@ async def student_toggle_like(
 
 # Submit lesson answers
 @router.post("/submit-lesson-answers", response_model=APIResponse)
-async def submit_lesson_answers(
+def submit_lesson_answers(
     request: StudentLessonAnswerRequest,
     repetition_quiz: str = Query(..., description="Type of repetition quiz"),
     db: Session = Depends(get_db)
@@ -364,31 +271,9 @@ async def submit_lesson_answers(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# Get spaced repetition quizzes
-@router.get("/spaced-repetition-quizzes", response_model=APIResponse)
-async def get_spaced_repetition_quizzes(
-    student_id: str = Query(..., description="Student ID to get spaced repetition quizzes for"),
-    db: Session = Depends(get_db)
-):
-    """Get spaced repetition quizzes for a student"""
-    try:
-        student_service = StudentService(db)
-        result = student_service.get_spaced_repetition_quizzes(student_id)
-        
-        return APIResponse(
-            success=True,
-            data=result
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 # Get spaced repetition quiz (singular)
 @router.get("/get-spaced-repetition-quiz", response_model=APIResponse)
-async def get_spaced_repetition_quiz(
+def get_spaced_repetition_quiz(
     student_id: str = Query(..., description="Student ID to get spaced repetition quiz for"),
     db: Session = Depends(get_db)
 ):
@@ -399,32 +284,6 @@ async def get_spaced_repetition_quiz(
         
         return APIResponse(
             success=True,
-            data=result
-        )
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ── Quiz Endpoints ──
-
-@router.post("/quiz/{quiz_id}/submit", response_model=APIResponse)
-async def submit_quiz(
-    quiz_id: str,
-    body: QuizSubmitRequest,
-    db: Session = Depends(get_db)
-):
-    """Submit answers for a quiz and get scored result."""
-    try:
-        service = StudentService(db)
-        answers_data = [{"question_id": a.question_id, "answer": a.answer} for a in body.answers]
-        result = service.submit_quiz(quiz_id, body.student_id, answers_data)
-        return APIResponse(
-            success=True,
-            message="Quiz submitted successfully",
             data=result
         )
     except NotFoundError as e:

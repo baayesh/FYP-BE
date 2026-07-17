@@ -297,34 +297,6 @@ async def update_user_status(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-# System management endpoints
-@router.get("/system/info", response_model=APIResponse)
-async def get_system_info(
-    db: Session = Depends(get_db)
-):
-    """Get system information and health status"""
-    try:
-        total_users = db.query(func.count(User.id)).scalar() or 0
-        total_courses = db.query(func.count(Course.id)).scalar() or 0
-        active_courses = db.query(func.count(Course.id)).filter(
-            Course.status == CourseStatus.ACTIVE
-        ).scalar() or 0
-        
-        system_info = {
-            "version": "1.0.0",
-            "databaseStatus": "Connected",
-            "uptime": "5 days",
-            "totalStorage": "100GB",
-            "usedStorage": "25GB",
-            "totalUsers": total_users,
-            "totalCourses": total_courses,
-            "activeCourses": active_courses
-        }
-        return APIResponse(success=True, data=system_info, message="System info retrieved successfully")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # Courses endpoints
 @router.get("/courses", response_model=APIResponse)
 async def get_courses(

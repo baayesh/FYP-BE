@@ -12,6 +12,7 @@ from app.models.grade import Grade
 from app.models.attendance import Attendance, AttendanceStatus
 from app.models.assignment import Assignment, AssignmentSubmission
 from app.models.notification import Notification
+from app.services.performance_service import PerformanceService
 
 
 class ParentStatsService:
@@ -52,6 +53,78 @@ class ParentStatsService:
             return "D"
         else:
             return "F"
+
+    @staticmethod
+    def _serialize_performance_data(perf_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Convert raw ORM objects from PerformanceService into plain dicts with
+        field names matching what the frontend shared components expect.
+        """
+        from decimal import Decimal
+
+        # Performance Trend: { date: str, score: number }
+        perf_trend = []
+        for p in perf_data.get("performance_trend", []):
+            perf_trend.append({
+                "date": str(p.date) if hasattr(p, 'date') else str(p.get('date', '')),
+                "score": float(p.score) if hasattr(p, 'score') else float(p.get('score', 0)),
+            })
+
+        # Weekly Activity: { day: str, hours: number, assignments: number }
+        weekly = []
+        for a in perf_data.get("weekly_activity", []):
+            weekly.append({
+                "day": a.day_of_week if hasattr(a, 'day_of_week') else a.get('day_of_week', ''),
+                "hours": float(a.hours_studied) if hasattr(a, 'hours_studied') else float(a.get('hours_studied', 0)),
+                "assignments": int(a.assignments_completed) if hasattr(a, 'assignments_completed') else int(a.get('assignments_completed', 0)),
+            })
+
+        # Skills: { skill: str, value: number }
+        skills = []
+        for s in perf_data.get("skills", []):
+            skills.append({
+                "skill": s.skill_name if hasattr(s, 'skill_name') else s.get('skill_name', ''),
+                "value": float(s.skill_value) if hasattr(s, 'skill_value') else float(s.get('skill_value', 0)),
+            })
+
+        # Student Level: { grade: str, stream: str, progress: number, academic_year?: str }
+        sl_raw = perf_data.get("student_level")
+        student_level = None
+        if sl_raw:
+            student_level = {
+                "grade": sl_raw.grade if hasattr(sl_raw, 'grade') else sl_raw.get('grade', ''),
+                "stream": sl_raw.stream if hasattr(sl_raw, 'stream') else sl_raw.get('stream', ''),
+                "progress": float(sl_raw.overall_progress) if hasattr(sl_raw, 'overall_progress') else float(sl_raw.get('overall_progress', 0)),
+                "academic_year": sl_raw.academic_year if hasattr(sl_raw, 'academic_year') else sl_raw.get('academic_year', None),
+            }
+
+        # Subject Marks: { subject: str, score: number }
+        marks = []
+        for m in perf_data.get("subject_marks", []):
+            marks.append({
+                "subject": m.subject_name if hasattr(m, 'subject_name') else m.get('subject_name', ''),
+                "score": float(m.score) if hasattr(m, 'score') else float(m.get('score', 0)),
+            })
+
+        # Improvement Areas: { subject: str, reason: str, suggestion: str, priority?: str }
+        improvements = []
+        for i in perf_data.get("improvement_areas", []):
+            raw_priority = i.priority if hasattr(i, 'priority') else i.get('priority', 'medium')
+            improvements.append({
+                "subject": i.subject_name if hasattr(i, 'subject_name') else i.get('subject_name', ''),
+                "reason": i.reason if hasattr(i, 'reason') else i.get('reason', ''),
+                "suggestion": i.suggestion if hasattr(i, 'suggestion') else i.get('suggestion', ''),
+                "priority": raw_priority.upper() if raw_priority else "MEDIUM",
+            })
+
+        return {
+            "performance_trend": perf_trend,
+            "weekly_activity": weekly,
+            "skills": skills,
+            "student_level": student_level,
+            "subject_marks": marks,
+            "improvement_areas": improvements,
+        }
 
     @staticmethod
     def get_dashboard_stats(parent_id: str, db: Session) -> Dict[str, Any]:
@@ -200,7 +273,12 @@ class ParentStatsService:
                         trend = "up"
                     elif recent < older - 2:
                         trend = "down"
-            
+
+            # Get full performance dashboard data for this child
+            perf_service = PerformanceService(db)
+            child_perf = perf_service.get_complete_dashboard_data(child_id, days=30)
+            serialized_perf = ParentStatsService._serialize_performance_data(child_perf)
+
             children_data.append({
                 "id": child_id,
                 "name": child_user.full_name,
@@ -209,7 +287,13 @@ class ParentStatsService:
                 "subjects": subjects,
                 "recent_activity": recent_activity,
                 "avgScore": int(avg_child_grade) if child_grades else None,
-                "trend": trend
+                "trend": trend,
+                "performance_trend": serialized_perf["performance_trend"],
+                "weekly_activity": serialized_perf["weekly_activity"],
+                "skills": serialized_perf["skills"],
+                "student_level": serialized_perf["student_level"],
+                "subject_marks": serialized_perf["subject_marks"],
+                "improvement_areas": serialized_perf["improvement_areas"],
             })
         
         # Get recent notifications

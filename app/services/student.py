@@ -473,34 +473,54 @@ class StudentService:
         # Evaluate answers using Gemini AI
         score = self._evaluate_answers_with_ai(lesson, answers)
         
-        # Query for existing StudentLesson record
+        # Query for existing StudentLesson record. Order deterministically
+        # (most recently updated first, then by id) to avoid picking an
+        # arbitrary row when duplicate (lesson_id, student_id) rows exist,
+        # and lock the row (SELECT ... FOR UPDATE) so concurrent requests
+        # for the same student/lesson serialize instead of racing.
         student_lesson = self.db.query(StudentLesson).filter(
             StudentLesson.lesson_id == lesson_id,
             StudentLesson.student_id == student_id
-        ).first()
-        
-        # If not found, create a new record
+        ).order_by(
+            StudentLesson.updated_at.desc(), StudentLesson.id.desc()
+        ).with_for_update().first()
+
+        # Map repetition_quiz to the corresponding question_list field name
+        if repetition_quiz == 'q2':
+            question_list_attr = "question_list_2"
+        elif repetition_quiz == 'q3':
+            question_list_attr = "question_list_3"
+        elif repetition_quiz == 'q4':
+            question_list_attr = "question_list_4"
+        else:
+            question_list_attr = "question_list_1"
+
+        # If not found, create a new record with the appropriate question list
         if not student_lesson:
             student_lesson = StudentLesson(
                 lesson_id=lesson_id,
                 student_id=student_id,
                 answers=answers,
-                question_list_1={"content": answers}
+                **{question_list_attr: {"content": answers}}
             )
             self.db.add(student_lesson)
+        else:
+            student_lesson.answers = answers
+            # Also refresh the question_list_N field for the current
+            # repetition_quiz on resubmission, mirroring the create branch.
+            setattr(student_lesson, question_list_attr, {"content": answers})
         
         # Update the appropriate result field based on repetition_quiz value
         if repetition_quiz == 'q1':
-            setattr(student_lesson, "Q1_Result", score)  # type: ignore[arg-type]
+            setattr(student_lesson, "Q1_Result", score)  
         elif repetition_quiz == 'q2':
-            setattr(student_lesson, "Q2_Result", score)  # type: ignore[arg-type]
+            setattr(student_lesson, "Q2_Result", score)  
         elif repetition_quiz == 'q3':
-            setattr(student_lesson, "Q3_Result", score)  # type: ignore[arg-type]
+            setattr(student_lesson, "Q3_Result", score) 
         elif repetition_quiz == 'q4':
-            setattr(student_lesson, "Q4_Result", score)  # type: ignore[arg-type]
+            setattr(student_lesson, "Q4_Result", score)  
         else:
-            setattr(student_lesson, "Q1_Result", score)  # type: ignore[arg-type]
-        #TODO: Update the answers field with the latest answers
+            setattr(student_lesson, "Q1_Result", score)
         try:
             self.db.commit()
             self.db.refresh(student_lesson)
@@ -519,7 +539,7 @@ class StudentService:
             "lesson_id": str(student_lesson.lesson_id),
             "student_id": str(student_lesson.student_id),
             "answers": student_lesson.answers,
-            "question_list_1": student_lesson.answers,
+            "question_list_1": student_lesson.question_list_1,
             "score": score,
             "created_at": student_lesson.created_at.isoformat(),
             "updated_at": student_lesson.updated_at.isoformat()
@@ -527,14 +547,16 @@ class StudentService:
 
     def _evaluate_answers_with_ai(self, lesson: Lesson, answers: str) -> int:
         """Evaluate student answers using Groq AI"""
-        
+        print("#################################_evaluate_answers_with_ai_#################################")
+        print(f"Evaluating answers for lesson_id: {lesson.id} with Groq AI")
         score = 0
         try:
             client = OpenAI(
                 api_key=settings.GROQ_API_KEY,
-                base_url="https://api.groq.com/openai/v1"
+                base_url="https://api.groq.com/openai/v1",
+                timeout=30.0
             )
-            
+
             if lesson is not None and lesson.content is not None:
                 prompt = f"""Based on the following lesson content, evaluate the student's answers and give a score out of 10.
 
@@ -553,7 +575,7 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
             )
-            
+            print('marks from Groq:', response)
             # Extract score from response
             try:
                 score_text = response.choices[0].message.content.strip()
@@ -589,8 +611,11 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
         
         client = OpenAI(
             api_key=settings.GROQ_API_KEY,
-            base_url="https://api.groq.com/openai/v1"
+            base_url="https://api.groq.com/openai/v1",
+            timeout=30.0
         )
+
+        import re as _re
 
         def _call_groq(prompt_text: str) -> str:
             resp = client.chat.completions.create(
@@ -599,12 +624,57 @@ Please provide only a numerical score between 0 and 10, where 10 is perfect and 
                 temperature=0.7,
             )
             text = resp.choices[0].message.content.strip()
-            # Strip markdown code block wrapping if present
-            if text.startswith("```"):
-                text = text.strip("`")
-                if text.startswith("json"):
-                    text = text[4:]
+            # Strip markdown code block wrapping if present — use regex to
+            # avoid corrupting backticks that appear inside JSON string values.
+            text = _re.sub(r'^```(?:json)?\s*\n?', '', text)
+            text = _re.sub(r'\n?```\s*$', '', text)
             return text.strip()
+
+        def _sanitize_quiz_json(raw: str) -> str:
+            """Parse the Groq response and return a normalised JSON string
+            that is guaranteed to have a top-level ``questions`` array."""
+            # 1. Attempt to parse as JSON
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                # Try to extract a JSON object from the text as a fallback
+                match = _re.search(r'\{.*"questions".*\}', raw, _re.DOTALL)
+                if match:
+                    try:
+                        data = json.loads(match.group())
+                    except json.JSONDecodeError:
+                        pass
+                    else:
+                        raw = match.group()
+                        return _sanitize_quiz_json(raw)
+                # Try extracting a JSON array of questions
+                match = _re.search(r'\[.*\]', raw, _re.DOTALL)
+                if match:
+                    try:
+                        items = json.loads(match.group())
+                        if isinstance(items, list) and len(items) > 0:
+                            return json.dumps({"difficulty": "ai-generated", "questions": items})
+                    except json.JSONDecodeError:
+                        pass
+                # Nothing worked — return the raw string; the frontend will
+                # attempt text-based parsing as a last resort.
+                return raw
+
+            # 2. Ensure there is a top-level "questions" array
+            if isinstance(data, dict):
+                for key in ("questions", "quiz", "question_list", "data", "results"):
+                    if key in data and isinstance(data[key], list):
+                        if key != "questions":
+                            data["questions"] = data[key]
+                        return json.dumps(data)
+                # If the dict has no array at all, wrap the whole thing
+                # so the frontend can still attempt to parse it.
+                return json.dumps(data)
+
+            if isinstance(data, list):
+                return json.dumps({"difficulty": "ai-generated", "questions": data})
+
+            return raw
 
         if lesson.content:
             prompt = f'''Generate 10 basic MCQ questions about "{lesson.content}".
@@ -672,28 +742,40 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
 
         print(f"Sending prompts to Groq")
 
-        response_text = _call_groq(prompt)
-        response_text_2 = _call_groq(prompt_2)
-        response_text_3 = _call_groq(prompt_3)
-        response_text_4 = _call_groq(prompt_4)
+        # Fetch AI responses and sanitise each one
+        response_text  = _sanitize_quiz_json(_call_groq(prompt))
+        response_text_2 = _sanitize_quiz_json(_call_groq(prompt_2))
+        response_text_3 = _sanitize_quiz_json(_call_groq(prompt_3))
+        response_text_4 = _sanitize_quiz_json(_call_groq(prompt_4))
 
         print(f"Received quiz responses: {response_text[:100]}..., {response_text_2[:100]}..., {response_text_3[:100]}..., {response_text_4[:100]}...")
         # Save quiz data to database if student_id is provided
         if student_id:
-            # Create new StudentLesson record
-            student_lesson = StudentLesson(
-                lesson_id=lesson_id,
-                student_id=student_id,
-                answers=None,
-                question_list_1={"content": response_text},
-                question_list_2={"content": response_text_2},
-                question_list_3={"content": response_text_3},
-                question_list_4={"content": response_text_4},
-                Q1_Result=None
-            )
+            student_lesson = self.db.query(StudentLesson).filter(
+                StudentLesson.lesson_id == lesson_id,
+                StudentLesson.student_id == student_id
+            ).order_by(
+                StudentLesson.updated_at.desc(), StudentLesson.id.desc()
+            ).first()
+
+            if student_lesson:
+                student_lesson.question_list_1 = {"content": response_text}
+                student_lesson.question_list_2 = {"content": response_text_2}
+                student_lesson.question_list_3 = {"content": response_text_3}
+                student_lesson.question_list_4 = {"content": response_text_4}
+            else:
+                student_lesson = StudentLesson(
+                    lesson_id=lesson_id,
+                    student_id=student_id,
+                    answers={},
+                    question_list_1={"content": response_text},
+                    question_list_2={"content": response_text_2},
+                    question_list_3={"content": response_text_3},
+                    question_list_4={"content": response_text_4},
+                )
+                self.db.add(student_lesson)
 
             try:
-                self.db.add(student_lesson)
                 self.db.commit()
                 self.db.refresh(student_lesson)
             except Exception as e:
@@ -774,6 +856,23 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
             "total_questions": len(questions),
         }
 
+    @staticmethod
+    def _normalize_quiz_column(value: Any) -> Dict[str, str]:
+        """Ensure the raw JSON column value is wrapped as ``{"content": "…"}``
+        so the frontend can always access ``quizzes.content`` regardless of legacy storage format."""
+        if value is None:
+            return {"content": ""}
+        if isinstance(value, str):
+            # Legacy: the column stored the raw JSON string
+            return {"content": value}
+        if isinstance(value, dict):
+            if "content" in value and isinstance(value["content"], str):
+                return value  # already normalised
+            # Dict without content key — serialise the whole dict
+            return {"content": json.dumps(value)}
+        # Fallback: serialise whatever it is
+        return {"content": json.dumps(value)}
+
     #get spaced repetition quizzes for a student based on time intervals
     def get_spaced_repetition_quizzes(self, student_id: str) -> Dict[str, Any]:
         """Get spaced repetition quizzes for a student based on time intervals"""
@@ -800,7 +899,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
                         "quiz_type": "spaced_repetition_2",
                         "question_type": "q2",
                         "lesson_id": str(lesson.lesson_id),
-                        "quizzes": lesson.question_list_2,
+                        "quizzes": self._normalize_quiz_column(lesson.question_list_2),
                         "days_since_creation": days_since_creation
                     }
                 
@@ -811,7 +910,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
                         "quiz_type": "spaced_repetition_3",
                         "question_type": "q3",
                         "lesson_id": str(lesson.lesson_id),
-                        "quizzes": lesson.question_list_3,
+                        "quizzes": self._normalize_quiz_column(lesson.question_list_3),
                         "days_since_creation": days_since_creation
                     }
                 
@@ -822,7 +921,7 @@ Return ONLY a valid JSON object (no markdown, no extra text) with this exact str
                         "quiz_type": "spaced_repetition_4",
                         "question_type": "q4",
                         "lesson_id": str(lesson.lesson_id),
-                        "quizzes": lesson.question_list_4,
+                        "quizzes": self._normalize_quiz_column(lesson.question_list_4),
                         "days_since_creation": days_since_creation
                     }
         

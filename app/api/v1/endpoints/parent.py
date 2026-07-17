@@ -74,31 +74,3 @@ async def get_child_grades(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/children/{child_id}/progress", response_model=APIResponse)
-async def get_child_progress(
-    child_id: str,
-    db: Session = Depends(get_db)
-):
-    """Get specific child's academic progress"""
-    try:
-        # Mock data
-        progress = {
-            "childId": child_id,
-            "overallGrade": 85.5,
-            "courses": [
-                {
-                    "name": "Mathematics",
-                    "grade": 88,
-                    "progress": 75
-                },
-                {
-                    "name": "Science",
-                    "grade": 82,
-                    "progress": 80
-                }
-            ]
-        }
-        return APIResponse(success=True, data=progress)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

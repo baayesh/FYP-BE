@@ -9,8 +9,8 @@ from app.schemas.forum import CreateReplyRequest, ToggleLikeRequest
 from app.core.exceptions import NotFoundError
 from app.models.user import User, UserRole
 from app.models.course import Course, CourseStatus, CourseEnrollment, EnrollmentStatus
-from app.models.assignment import Assignment, AssignmentSubmission, AssignmentStatus
-from app.models.grade import Grade, GradeItemType
+from app.models.assignment import Assignment
+
 from app.services.teacher import (
     TeacherForumService,
     TeacherCourseService,
@@ -107,18 +107,6 @@ async def get_dashboard_stats(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/dashboard/stats/snapshot", response_model=APIResponse)
-async def capture_teacher_stats_snapshot(
-    teacher_id: str = Query(..., description="UUID of the teacher"),
-    db: Session = Depends(get_db)
-):
-    """Capture and persist today's teacher stats snapshot and minimal timeseries."""
-    try:
-        service = TeacherStatsService(db)
-        saved = service.capture_snapshot(teacher_id)
-        return APIResponse(success=True, data=saved, message="Snapshot saved")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 # Course management endpoints
 @router.get("/courses", response_model=APIResponse)
@@ -263,18 +251,6 @@ async def get_course_by_id(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/courses", response_model=APIResponse)
-async def create_course(
-    course_data: dict,
-    teacher_id: str = Query(..., description="UUID of the teacher"),
-    db: Session = Depends(get_db)
-):
-    """Create a new course"""
-    try:
-        return APIResponse(success=True, message="Course created successfully")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -596,88 +572,6 @@ async def create_assignment(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ── Grading Schema ──
-
-class GradeSubmissionRequest(BaseModel):
-    student_id: str = Field(..., description="ID of the student")
-    grade: float = Field(..., ge=0, description="Numeric grade (percentage)")
-    feedback: Optional[str] = Field(None, description="Teacher feedback")
-    max_score: float = Field(100.0, ge=1, description="Maximum possible score")
-
-
-# ── Grading Endpoint ──
-
-@router.post("/assignments/{assignment_id}/grade", response_model=APIResponse)
-async def grade_assignment(
-    assignment_id: str,
-    body: GradeSubmissionRequest,
-    teacher_id: str = Query(..., description="UUID of the teacher"),
-    db: Session = Depends(get_db)
-):
-    """Grade a student's assignment submission."""
-    try:
-        assignment = db.query(Assignment).filter(Assignment.id == assignment_id).first()
-        if not assignment:
-            raise HTTPException(status_code=404, detail="Assignment not found")
-
-        course = db.query(Course).filter(
-            Course.id == assignment.course_id,
-            Course.teacher_id == teacher_id
-        ).first()
-        if not course:
-            raise HTTPException(status_code=403, detail="You do not have permission to grade this assignment")
-
-        submission = db.query(AssignmentSubmission).filter(
-            AssignmentSubmission.assignment_id == assignment_id,
-            AssignmentSubmission.student_id == body.student_id
-        ).first()
-        if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
-
-        percentage = min(body.grade, 100.0)
-        points_earned = round((percentage / 100.0) * body.max_score, 2)
-
-        submission.grade = percentage
-        submission.feedback = body.feedback
-        submission.status = AssignmentStatus.GRADED
-
-        grade_record = Grade(
-            student_id=body.student_id,
-            course_id=assignment.course_id,
-            item_type=GradeItemType.ASSIGNMENT,
-            item_id=assignment_id,
-            grade=percentage,
-            points_earned=points_earned,
-            points_possible=body.max_score,
-            graded_by=teacher_id,
-            graded_at=datetime.utcnow(),
-        )
-        db.add(grade_record)
-        db.commit()
-
-        try:
-            PerformanceService(db).update_trend(body.student_id)
-        except Exception:
-            pass
-
-        return APIResponse(
-            success=True,
-            message="Assignment graded successfully",
-            data={
-                "submission_id": submission.id,
-                "grade": percentage,
-                "points_earned": points_earned,
-                "points_possible": body.max_score,
-                "feedback": body.feedback,
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
