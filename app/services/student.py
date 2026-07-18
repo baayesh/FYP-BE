@@ -62,6 +62,7 @@ class StudentService:
             .order_by(Grade.graded_at.desc())
             .all()
         )
+        print(f"Fetched {len(results)} grades for student_id: {student_id_str}")
 
         assignment_ids = []
         essay_ids = []
